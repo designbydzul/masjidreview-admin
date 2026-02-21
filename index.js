@@ -3064,7 +3064,7 @@ export default {
         }
         for (let i = 0; i < ids.length; i++) {
           if (status === 'approved') {
-            await env.DB.prepare('UPDATE reviews SET status = ?, validated_by = ? WHERE id = ?').bind(status, admin.email, ids[i]).run();
+            await env.DB.prepare('UPDATE reviews SET status = ?, validated_by = ? WHERE id = ?').bind(status, admin.name, ids[i]).run();
           } else {
             await env.DB.prepare('UPDATE reviews SET status = ? WHERE id = ?').bind(status, ids[i]).run();
           }
@@ -3087,7 +3087,7 @@ export default {
 
         if (body.status === 'approved') {
           await env.DB.prepare('UPDATE reviews SET status = ?, validated_by = ? WHERE id = ?')
-            .bind(body.status, admin.email, reviewId).run();
+            .bind(body.status, admin.name, reviewId).run();
         } else {
           await env.DB.prepare('UPDATE reviews SET status = ? WHERE id = ?')
             .bind(body.status, reviewId).run();
