@@ -1,0 +1,950 @@
+import HTML from './frontend.js';
+
+// ── JSON Helper ──
+function json(data, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function generateToken() {
+  return crypto.randomUUID();
+}
+
+function normalizeWA(number) {
+  if (!number) return '';
+  var n = String(number).replace(/[\s\-\(\)]/g, '');
+  if (n.startsWith('+')) n = n.slice(1);
+  if (n.startsWith('08')) n = '62' + n.slice(1);
+  if (n.startsWith('8') && !n.startsWith('62')) n = '62' + n;
+  return n;
+}
+
+// ── Session Helper ──
+
+async function getSession(request, env) {
+  const cookie = request.headers.get('Cookie') || '';
+  const match = cookie.match(/(?:^|;\s*)admin_session=([^\s;]+)/);
+  if (!match) return null;
+
+  const token = match[1];
+  const session = await env.DB.prepare(
+    "SELECT * FROM user_sessions WHERE token = ? AND expires_at > datetime('now')"
+  ).bind(token).first();
+  if (!session) return null;
+
+  const user = await env.DB.prepare(
+    "SELECT id, name, wa_number, role FROM users WHERE id = ? AND role IN ('admin', 'super_admin')"
+  ).bind(session.user_id).first();
+  return user || null;
+}
+
+// ── Cookie Helpers ──
+
+function sessionCookie(token) {
+  const maxAge = 7 * 24 * 60 * 60; // 7 days
+  return `admin_session=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
+}
+
+function clearCookie() {
+  return 'admin_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0';
+}
+
+// ── Masjid Fuzzy Match ──
+
+async function matchMasjid(name, city, env) {
+  const stopWords = ['masjid','agung','besar','jami','raya','al','an','ar','as','at'];
+  const words = name.split(/[\s\-]+/).filter(w => !stopWords.includes(w.toLowerCase()) && w.length > 1);
+  if (words.length === 0) return null;
+
+  const conditions = words.map(() => "name LIKE ?");
+  const baseParams = words.map(w => '%' + w + '%');
+
+  const baseSql = "SELECT id, name, city FROM masjid WHERE status = 'approved' AND (" + conditions.join(' OR ') + ")";
+
+  // Try with city filter first if city is provided
+  if (city) {
+    const cityParams = [...baseParams, '%' + city + '%'];
+    const { results: cityResults } = await env.DB.prepare(baseSql + " AND city LIKE ? LIMIT 5").bind(...cityParams).all();
+    if (cityResults.length > 0) return cityResults[0];
+  }
+
+  // Fallback: search without city filter
+  const { results } = await env.DB.prepare(baseSql + " LIMIT 5").bind(...baseParams).all();
+  return results.length > 0 ? results[0] : null;
+}
+
+// ── AI Extraction System Prompt ──
+
+const AI_SYSTEM_PROMPT = `Kamu adalah asisten yang mengekstrak data review masjid dari pesan WhatsApp berbahasa Indonesia.
+
+Dari teks yang diberikan, ekstrak informasi berikut dalam format JSON array (karena satu pesan bisa berisi review untuk lebih dari 1 masjid):
+
+[
+  {
+    "masjid_name": "nama masjid yang disebutkan",
+    "city": "kota jika disebutkan, null jika tidak",
+    "rating": angka 1-5 jika disebutkan, null jika tidak,
+    "review_text": "ringkasan testimoni/review dari pengirim"
+  }
+]
+
+Aturan:
+- Selalu kembalikan JSON array, bahkan jika hanya 1 review
+- Jika tidak ada review masjid dalam pesan, kembalikan array kosong []
+- Jangan mengarang informasi yang tidak ada dalam teks
+- Rating bisa dalam format "4/5", "4.5", "8/10" (konversi ke skala 1-5)
+- review_text harus merangkum opini pengirim, bukan copy paste seluruh teks
+- Respond ONLY with the JSON array, no other text`;
+
+// ── Fonnte Reply Helper ──
+
+async function sendFonnteReply(target, message, env) {
+  try {
+    await fetch('https://api.fonnte.com/send', {
+      method: 'POST',
+      headers: {
+        'Authorization': env.FONNTE_TOKEN,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ target, message }),
+    });
+  } catch (e) {
+    // Reply failure is non-critical — review is already saved
+  }
+}
+
+// ── Fonnte Webhook Handler ──
+
+async function handleFonnteWebhook(request, env, ctx) {
+  // ── Helper: update result in webhook_logs ──
+  let logId = null;
+  async function logResult(resultObj) {
+    if (!logId) return;
+    try {
+      await env.DB.prepare("UPDATE webhook_logs SET result = ? WHERE id = ?")
+        .bind(JSON.stringify(resultObj), logId).run();
+    } catch (_) { /* non-critical */ }
+  }
+
+  // ── Step 1: Log raw request body for debugging ──
+  let rawBody = '';
+  try {
+    rawBody = await request.text();
+    await env.DB.prepare(
+      "CREATE TABLE IF NOT EXISTS webhook_logs (id TEXT PRIMARY KEY, raw_body TEXT, result TEXT, created_at TEXT)"
+    ).run();
+    logId = crypto.randomUUID();
+    await env.DB.prepare(
+      "INSERT INTO webhook_logs (id, raw_body, result, created_at) VALUES (?, ?, '', datetime('now'))"
+    ).bind(logId, rawBody).run();
+  } catch (e) {
+    // Logging failure should not block processing
+  }
+
+  try {
+    // ── Step 2: Parse JSON body ──
+    let body;
+    try {
+      body = JSON.parse(rawBody);
+    } catch (parseErr) {
+      const r = { error: 'Invalid JSON body', parseError: String(parseErr) };
+      await logResult(r);
+      return json(r, 400);
+    }
+
+    if (!body.message || !body.message.trim()) {
+      const r = { error: 'Message is required', body_keys: Object.keys(body) };
+      await logResult(r);
+      return json(r, 400);
+    }
+
+    // ── Step 3: Lenient device validation (contains check) ──
+    const deviceStr = String(body.device || '');
+    if (!deviceStr.includes('6285111043194')) {
+      const r = { error: 'Invalid device', device_received: deviceStr };
+      await logResult(r);
+      return json(r, 400);
+    }
+
+    // ── Step 4: Group vs DM logic ──
+    const isGroup = body.sender && body.sender.includes('@g.us');
+    let message = body.message.trim();
+
+    if (isGroup) {
+      // Group: only process if message starts with /review
+      if (!/^\/review\b/i.test(message)) {
+        const r = { ok: true, extracted: 0, reason: 'no_trigger', isGroup: true };
+        await logResult(r);
+        return json(r, 200);
+      }
+      // Strip /review prefix
+      message = message.replace(/^\/review\s*/i, '').trim();
+    }
+
+    // ── Step 5: Strip @mentions (LID or phone format) from message ──
+    message = message.replace(/@\d+/g, '').trim();
+
+    if (!message) {
+      const r = { ok: true, extracted: 0, reason: 'empty_after_strip' };
+      await logResult(r);
+      return json(r, 200);
+    }
+
+    // Reviewer name: use name field, fallback to member (group) or sender (DM)
+    const senderName = body.name || (isGroup ? body.member : body.sender) || 'Anonim';
+    const replyTarget = body.sender; // group ID for groups, phone for DMs
+
+    // Extract sender WA number for review linking
+    const senderWA = isGroup ? String(body.member || '') : String(body.sender || '').replace('@s.whatsapp.net', '');
+
+    // Log what we're sending to AI
+    await logResult({ step: 'pre_ai', message_to_ai: message, senderName, isGroup, replyTarget });
+
+    // ── Step 6: Call Workers AI for extraction ──
+    let aiResponse;
+    try {
+      aiResponse = await env.AI.run('@cf/meta/llama-3.1-8b-instruct', {
+        messages: [
+          { role: 'system', content: AI_SYSTEM_PROMPT },
+          { role: 'user', content: message },
+        ],
+        max_tokens: 1024,
+      });
+    } catch (aiErr) {
+      const r = { ok: false, error: 'AI call failed', detail: String(aiErr) };
+      await logResult(r);
+      return json(r, 200);
+    }
+
+    // Log raw AI response
+    const aiRaw = aiResponse.response || '';
+    await logResult({ step: 'post_ai', ai_raw: aiRaw.substring(0, 500) });
+
+    // Parse AI response
+    let extracted;
+    try {
+      let raw = aiRaw;
+      // Strip markdown code fences if present
+      raw = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+      extracted = JSON.parse(raw);
+    } catch (parseErr) {
+      const r = { ok: false, error: 'AI response not parseable', ai_raw: aiRaw.substring(0, 500), parseError: String(parseErr) };
+      await logResult(r);
+      ctx.waitUntil(sendFonnteReply(replyTarget, '🤔 Hmm, sepertinya pesanmu bukan review masjid. Coba kirim ulang dengan format:\n\n' + (isGroup ? '/review ' : '') + 'Masjid [Nama]: [pendapatmu]. Rating [1-5]', env));
+      return json(r, 200);
+    }
+
+    // Validate it's an array
+    if (!Array.isArray(extracted)) {
+      const r = { ok: false, error: 'AI response is not an array', ai_raw: aiRaw.substring(0, 500), type: typeof extracted };
+      await logResult(r);
+      return json(r, 200);
+    }
+
+    // Empty array = no reviews found in message
+    if (extracted.length === 0) {
+      const helpMsg = isGroup
+        ? '🤔 Hmm, sepertinya pesanmu bukan review masjid. Coba kirim ulang dengan format:\n\n/review Masjid [Nama]: [pendapatmu]. Rating [1-5]'
+        : '🤔 Hmm, sepertinya pesanmu bukan review masjid. Coba kirim ulang dengan format seperti:\n\nReview Masjid [Nama]: [pendapatmu]. Rating [1-5]';
+      ctx.waitUntil(sendFonnteReply(replyTarget, helpMsg, env));
+      const r = { ok: true, extracted: 0, results: [], ai_returned_empty: true };
+      await logResult(r);
+      return json(r, 200);
+    }
+
+    // ── Step 7: Match masjid + create pending reviews ──
+    const results = [];
+    for (const item of extracted) {
+      const masjidName = item.masjid_name || '';
+      const city = item.city || null;
+      const rating = item.rating != null ? Number(item.rating) : null;
+      const reviewText = item.review_text || '';
+
+      if (!masjidName) {
+        results.push({ status: 'skipped', reason: 'no masjid name' });
+        continue;
+      }
+
+      // Fuzzy match masjid
+      const matched = await matchMasjid(masjidName, city, env);
+
+      if (matched) {
+        // Create pending review
+        const reviewId = crypto.randomUUID();
+        const matchedUser = senderWA ? await env.DB.prepare("SELECT id FROM users WHERE wa_number = ?").bind(senderWA).first() : null;
+        await env.DB.prepare(
+          "INSERT INTO reviews (id, masjid_id, reviewer_name, rating, short_description, source_platform, status, wa_number, user_id, created_at) VALUES (?, ?, ?, ?, ?, 'wa_bot', 'pending', ?, ?, datetime('now'))"
+        ).bind(
+          reviewId,
+          matched.id,
+          senderName,
+          rating,
+          reviewText,
+          senderWA || null,
+          matchedUser ? matchedUser.id : null
+        ).run();
+
+        results.push({
+          masjid_name: masjidName,
+          matched_masjid_id: matched.id,
+          matched_masjid_name: matched.name,
+          review_id: reviewId,
+          status: 'created',
+        });
+      } else {
+        results.push({
+          masjid_name: masjidName,
+          matched_masjid_id: null,
+          review_id: null,
+          status: 'masjid_not_found',
+        });
+      }
+    }
+
+    // ── Step 8: Send reply via Fonnte API ──
+    let replyMsg = '';
+    const createdResults = results.filter(r => r.status === 'created');
+    const notFoundResults = results.filter(r => r.status === 'masjid_not_found');
+
+    if (createdResults.length > 0) {
+      const masjidNames = createdResults.map(r => '• ' + r.matched_masjid_name).join('\n');
+      replyMsg = '✅ Review diterima! Terima kasih 🙏\n\n' +
+        'Diekstrak: ' + createdResults.length + ' review\n' +
+        masjidNames + '\n\n' +
+        'Review akan ditampilkan setelah diverifikasi tim.';
+      if (notFoundResults.length > 0) {
+        const missing = notFoundResults.map(r => '• ' + r.masjid_name).join('\n');
+        replyMsg += '\n\n⚠️ Masjid tidak ditemukan:\n' + missing + '\nTim akan menambahkan masjid ini.';
+      }
+    } else if (notFoundResults.length > 0) {
+      const missing = notFoundResults.map(r => r.masjid_name).join(', ');
+      replyMsg = '⚠️ Review diterima tapi masjid tidak ditemukan di database.\n\n' +
+        'Masjid yang disebutkan: ' + missing + '\n\n' +
+        'Tim akan menambahkan masjid ini terlebih dahulu.';
+    }
+
+    // Send reply (fire-and-forget via ctx.waitUntil)
+    if (replyMsg) {
+      ctx.waitUntil(sendFonnteReply(replyTarget, replyMsg, env));
+    }
+
+    const finalResult = { ok: true, extracted: results.length, results };
+    await logResult(finalResult);
+    return json(finalResult, 200);
+
+  } catch (err) {
+    const r = { ok: false, error: 'Webhook processing failed', detail: String(err), stack: String(err.stack || '') };
+    await logResult(r);
+    return json(r, 200);
+  }
+}
+
+// ── Worker Entry Point ──
+
+export default {
+  async fetch(request, env, ctx) {
+    const { pathname } = new URL(request.url);
+
+    try {
+      // ── POST /webhook/fonnte (no auth required) ──
+      if (pathname === '/webhook/fonnte' && request.method === 'POST') {
+        return handleFonnteWebhook(request, env, ctx);
+      }
+
+      // ── GET /webhook/fonnte (health check for Fonnte) ──
+      if (pathname === '/webhook/fonnte' && request.method === 'GET') {
+        return json({ ok: true, message: 'Webhook active' });
+      }
+
+      // ── POST /auth/otp/request ──
+      if (pathname === '/auth/otp/request' && request.method === 'POST') {
+        try {
+          if (!env.FONNTE_TOKEN) {
+            return json({ error: 'OTP service not configured' }, 500);
+          }
+          const body = await request.json();
+          const wa = normalizeWA(body.wa_number);
+          if (!wa || wa.length < 10 || wa.length > 15) {
+            return json({ error: 'Nomor WhatsApp tidak valid' }, 400);
+          }
+
+          // Check user exists with admin role
+          const user = await env.DB.prepare(
+            "SELECT id, role FROM users WHERE wa_number = ? AND role IN ('admin', 'super_admin')"
+          ).bind(wa).first();
+          if (!user) {
+            return json({ error: 'Nomor WhatsApp tidak terdaftar sebagai admin' }, 403);
+          }
+
+          // Rate limit: max 3 OTP per hour
+          const recentCount = await env.DB.prepare(
+            "SELECT COUNT(*) as cnt FROM otp_codes WHERE wa_number = ? AND created_at > datetime('now', '-1 hour')"
+          ).bind(wa).first();
+          if (recentCount && recentCount.cnt >= 3) {
+            return json({ error: 'Terlalu banyak percobaan. Coba lagi nanti.' }, 429);
+          }
+
+          const code = String(Math.floor(100000 + Math.random() * 900000));
+          const id = crypto.randomUUID();
+          const created_at = new Date().toISOString();
+          const expires_at = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+          await env.DB.prepare(
+            "INSERT INTO otp_codes (id, wa_number, code, expires_at, used, created_at) VALUES (?, ?, ?, ?, 0, ?)"
+          ).bind(id, wa, code, expires_at, created_at).run();
+
+          await fetch('https://api.fonnte.com/send', {
+            method: 'POST',
+            headers: { 'Authorization': env.FONNTE_TOKEN, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              target: wa,
+              message: 'Kode login admin MasjidReview: ' + code + '. Berlaku 5 menit. Jangan bagikan kode ini.',
+            }),
+          });
+
+          // Cleanup expired OTPs
+          env.DB.prepare("DELETE FROM otp_codes WHERE expires_at < datetime('now')").run();
+
+          return json({ ok: true, message: 'OTP terkirim ke WhatsApp' });
+        } catch (e) {
+          return json({ error: 'Gagal mengirim OTP' }, 500);
+        }
+      }
+
+      // ── POST /auth/otp/verify ──
+      if (pathname === '/auth/otp/verify' && request.method === 'POST') {
+        try {
+          const body = await request.json();
+          const wa = normalizeWA(body.wa_number);
+          const code = String(body.code || '').trim();
+          if (!wa || !code) {
+            return json({ error: 'Nomor WA dan kode OTP wajib diisi' }, 400);
+          }
+
+          const otp = await env.DB.prepare(
+            "SELECT * FROM otp_codes WHERE wa_number = ? AND code = ? AND used = 0 AND expires_at > datetime('now') ORDER BY created_at DESC LIMIT 1"
+          ).bind(wa, code).first();
+          if (!otp) {
+            return json({ error: 'Kode OTP salah atau sudah kadaluarsa' }, 400);
+          }
+
+          // Mark OTP as used
+          await env.DB.prepare("UPDATE otp_codes SET used = 1 WHERE id = ?").bind(otp.id).run();
+
+          // Verify user has admin role
+          const user = await env.DB.prepare(
+            "SELECT id, name, wa_number, role FROM users WHERE wa_number = ? AND role IN ('admin', 'super_admin')"
+          ).bind(wa).first();
+          if (!user) {
+            return json({ error: 'Akun tidak memiliki akses admin' }, 403);
+          }
+
+          // Create session in user_sessions (7-day expiry)
+          const token = generateToken();
+          const sessionId = crypto.randomUUID();
+          const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+          const createdAt = new Date().toISOString();
+
+          await env.DB.prepare(
+            "INSERT INTO user_sessions (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)"
+          ).bind(sessionId, user.id, token, expiresAt, createdAt).run();
+
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              admin: { id: user.id, name: user.name, wa_number: user.wa_number, role: user.role },
+            }),
+            {
+              status: 200,
+              headers: {
+                'Content-Type': 'application/json',
+                'Set-Cookie': sessionCookie(token),
+              },
+            }
+          );
+        } catch (e) {
+          return json({ error: 'Verifikasi gagal' }, 500);
+        }
+      }
+
+      // ── POST /auth/logout ──
+      if (pathname === '/auth/logout' && request.method === 'POST') {
+        const cookie = request.headers.get('Cookie') || '';
+        const match = cookie.match(/(?:^|;\s*)admin_session=([^\s;]+)/);
+
+        if (match) {
+          await env.DB.prepare('DELETE FROM user_sessions WHERE token = ?').bind(match[1]).run();
+        }
+
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Set-Cookie': clearCookie(),
+          },
+        });
+      }
+
+      // ── GET /auth/me ──
+      if (pathname === '/auth/me' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        return json(admin);
+      }
+
+      // ── GET /api/stats ──
+      if (pathname === '/api/stats' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const stats = await env.DB.prepare(`
+          SELECT
+            (SELECT COUNT(*) FROM masjid WHERE status = 'approved') as total_masjid,
+            (SELECT COUNT(*) FROM reviews WHERE status = 'approved') as total_reviews,
+            (SELECT COUNT(*) FROM reviews WHERE status = 'pending') as pending_reviews,
+            (SELECT COUNT(*) FROM masjid WHERE status = 'pending') as pending_masjid,
+            (SELECT COUNT(*) FROM users) as total_users,
+            (SELECT COUNT(*) FROM users WHERE role IN ('admin', 'super_admin')) as total_admins
+        `).first();
+
+        return json(stats);
+      }
+
+      // ── GET /api/masjids ──
+      if (pathname === '/api/masjids' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const url = new URL(request.url);
+        const status = url.searchParams.get('status');
+
+        let sql = 'SELECT * FROM masjid';
+        const params = [];
+        if (status) {
+          sql += ' WHERE status = ?';
+          params.push(status);
+        }
+        sql += " ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END, name ASC";
+
+        const stmt = params.length > 0
+          ? env.DB.prepare(sql).bind(...params)
+          : env.DB.prepare(sql);
+        const { results } = await stmt.all();
+        return json(results);
+      }
+
+      // ── POST /api/masjids ──
+      if (pathname === '/api/masjids' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const body = await request.json();
+        if (!body.name || !body.city) {
+          return json({ error: 'Nama dan kota wajib diisi' }, 400);
+        }
+
+        const id = crypto.randomUUID();
+        const allowedCols = ['name','city','address','photo_url','google_maps_url','latitude','longitude','ig_post_url','info_label','info_photos','ramadan_takjil','ramadan_makanan_berat','ramadan_ceramah_tarawih','ramadan_mushaf_alquran','ramadan_itikaf','ramadan_parkir','ramadan_rakaat','ramadan_tempo','akhwat_wudhu_private','akhwat_mukena_available','akhwat_ac_available','akhwat_safe_entrance'];
+
+        const cols = ['id', 'status'];
+        const vals = [id, 'approved'];
+        const placeholders = ['?', '?'];
+
+        for (const col of allowedCols) {
+          if (body[col] !== undefined && body[col] !== null && body[col] !== '') {
+            cols.push(col);
+            vals.push(body[col]);
+            placeholders.push('?');
+          }
+        }
+
+        await env.DB.prepare(
+          'INSERT INTO masjid (' + cols.join(',') + ') VALUES (' + placeholders.join(',') + ')'
+        ).bind(...vals).run();
+
+        const created = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(id).first();
+        return json(created, 201);
+      }
+
+      // ── GET /api/masjids/:id/similar ──
+      const similarMatch = pathname.match(/^\/api\/masjids\/([^/]+)\/similar$/);
+      if (similarMatch && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const masjidId = similarMatch[1];
+        const masjid = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(masjidId).first();
+        if (!masjid) return json({ error: 'Masjid not found' }, 404);
+
+        const stopWords = ['masjid','agung','besar','jami','raya','al','an','ar','as','at'];
+        const words = masjid.name.split(/\s+/).filter(function(w) {
+          return !stopWords.includes(w.toLowerCase()) && w.length > 1;
+        });
+
+        if (words.length === 0) return json([]);
+
+        const conditions = [];
+        const params = [];
+        for (const word of words) {
+          conditions.push("name LIKE ?");
+          params.push('%' + word + '%');
+        }
+
+        const sql = 'SELECT id, name, city, status FROM masjid WHERE (' + conditions.join(' OR ') + ') AND city = ? AND id != ? LIMIT 10';
+        params.push(masjid.city, masjidId);
+
+        const { results } = await env.DB.prepare(sql).bind(...params).all();
+        return json(results);
+      }
+
+      // ── POST /api/upload ──
+      if (pathname === '/api/upload' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const formData = await request.formData();
+        const file = formData.get('file');
+        if (!file || !file.size) return json({ error: 'No file provided' }, 400);
+        if (!file.type.startsWith('image/')) return json({ error: 'File must be an image' }, 400);
+        if (file.size > 5 * 1024 * 1024) return json({ error: 'Max file size is 5MB' }, 400);
+
+        const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+        const ext = extMap[file.type] || 'jpg';
+        const prefix = formData.get('prefix') || 'masjid';
+        const uuid = crypto.randomUUID();
+        const key = prefix + '/' + uuid + '.' + ext;
+
+        await env.IMAGES.put(key, file.stream(), {
+          httpMetadata: { contentType: file.type },
+        });
+
+        const publicUrl = 'https://masjidreview.id/images/' + key;
+        return json({ ok: true, url: publicUrl, key: key });
+      }
+
+      // ── PATCH /api/masjids/bulk-status ──
+      if (pathname === '/api/masjids/bulk-status' && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const body = await request.json();
+        const ids = body.ids;
+        const status = body.status;
+        if (!Array.isArray(ids) || ids.length === 0 || ids.length > 50) {
+          return json({ error: 'ids must be an array of 1-50 items' }, 400);
+        }
+        if (!status || !['approved', 'rejected'].includes(status)) {
+          return json({ error: 'Status harus approved atau rejected' }, 400);
+        }
+        for (let i = 0; i < ids.length; i++) {
+          await env.DB.prepare('UPDATE masjid SET status = ? WHERE id = ?').bind(status, ids[i]).run();
+        }
+        return json({ ok: true, updated: ids.length });
+      }
+
+      // ── PATCH /api/masjids/:id/status ──
+      const statusMatch = pathname.match(/^\/api\/masjids\/([^/]+)\/status$/);
+      if (statusMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const masjidId = statusMatch[1];
+        const body = await request.json();
+
+        if (!body.status || !['approved', 'rejected'].includes(body.status)) {
+          return json({ error: 'Status harus approved atau rejected' }, 400);
+        }
+
+        await env.DB.prepare('UPDATE masjid SET status = ? WHERE id = ?').bind(body.status, masjidId).run();
+        const updated = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(masjidId).first();
+        if (!updated) return json({ error: 'Masjid not found' }, 404);
+        return json(updated);
+      }
+
+      // ── /api/masjids/:id (GET, PUT, DELETE) ──
+      const masjidIdMatch = pathname.match(/^\/api\/masjids\/([^/]+)$/);
+      if (masjidIdMatch) {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const masjidId = masjidIdMatch[1];
+
+        // GET single
+        if (request.method === 'GET') {
+          const row = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(masjidId).first();
+          if (!row) return json({ error: 'Masjid not found' }, 404);
+          return json(row);
+        }
+
+        // PUT update
+        if (request.method === 'PUT') {
+          const body = await request.json();
+          const allowedCols = ['name','city','address','photo_url','google_maps_url','latitude','longitude','ig_post_url','info_label','info_photos','ramadan_takjil','ramadan_makanan_berat','ramadan_ceramah_tarawih','ramadan_mushaf_alquran','ramadan_itikaf','ramadan_parkir','ramadan_rakaat','ramadan_tempo','akhwat_wudhu_private','akhwat_mukena_available','akhwat_ac_available','akhwat_safe_entrance','status'];
+
+          const setClauses = [];
+          const vals = [];
+          for (const col of allowedCols) {
+            if (body[col] !== undefined) {
+              setClauses.push(col + ' = ?');
+              vals.push(body[col]);
+            }
+          }
+
+          if (setClauses.length === 0) return json({ error: 'Tidak ada data untuk diperbarui' }, 400);
+
+          vals.push(masjidId);
+          await env.DB.prepare(
+            'UPDATE masjid SET ' + setClauses.join(', ') + ' WHERE id = ?'
+          ).bind(...vals).run();
+
+          const updated = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(masjidId).first();
+          return json(updated);
+        }
+
+        // DELETE
+        if (request.method === 'DELETE') {
+          if (admin.role !== 'super_admin') {
+            return json({ error: 'Hanya super_admin yang dapat menghapus masjid' }, 403);
+          }
+          await env.DB.prepare('DELETE FROM masjid WHERE id = ?').bind(masjidId).run();
+          return json({ ok: true });
+        }
+      }
+
+      // ── GET /api/reviews ──
+      if (pathname === '/api/reviews' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const url = new URL(request.url);
+        const status = url.searchParams.get('status');
+
+        let sql = "SELECT r.*, m.name as masjid_name FROM reviews r LEFT JOIN masjid m ON r.masjid_id = m.id";
+        const params = [];
+        if (status) {
+          sql += ' WHERE r.status = ?';
+          params.push(status);
+        }
+        sql += " ORDER BY CASE WHEN r.status='pending' THEN 0 ELSE 1 END, r.created_at DESC";
+
+        const stmt = params.length > 0
+          ? env.DB.prepare(sql).bind(...params)
+          : env.DB.prepare(sql);
+        const { results } = await stmt.all();
+        return json(results);
+      }
+
+      // ── PATCH /api/reviews/bulk-status ──
+      if (pathname === '/api/reviews/bulk-status' && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const body = await request.json();
+        const ids = body.ids;
+        const status = body.status;
+        if (!Array.isArray(ids) || ids.length === 0 || ids.length > 50) {
+          return json({ error: 'ids must be an array of 1-50 items' }, 400);
+        }
+        if (!status || !['approved', 'rejected'].includes(status)) {
+          return json({ error: 'Status harus approved atau rejected' }, 400);
+        }
+        for (let i = 0; i < ids.length; i++) {
+          if (status === 'approved') {
+            await env.DB.prepare('UPDATE reviews SET status = ?, validated_by = ? WHERE id = ?').bind(status, admin.name, ids[i]).run();
+          } else {
+            await env.DB.prepare('UPDATE reviews SET status = ? WHERE id = ?').bind(status, ids[i]).run();
+          }
+        }
+        return json({ ok: true, updated: ids.length });
+      }
+
+      // ── PATCH /api/reviews/:id/status ──
+      const reviewStatusMatch = pathname.match(/^\/api\/reviews\/([^/]+)\/status$/);
+      if (reviewStatusMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const reviewId = reviewStatusMatch[1];
+        const body = await request.json();
+
+        if (!body.status || !['approved', 'rejected'].includes(body.status)) {
+          return json({ error: 'Status harus approved atau rejected' }, 400);
+        }
+
+        if (body.status === 'approved') {
+          await env.DB.prepare('UPDATE reviews SET status = ?, validated_by = ? WHERE id = ?')
+            .bind(body.status, admin.name, reviewId).run();
+        } else {
+          await env.DB.prepare('UPDATE reviews SET status = ? WHERE id = ?')
+            .bind(body.status, reviewId).run();
+        }
+
+        const updated = await env.DB.prepare(
+          "SELECT r.*, m.name as masjid_name FROM reviews r LEFT JOIN masjid m ON r.masjid_id = m.id WHERE r.id = ?"
+        ).bind(reviewId).first();
+        if (!updated) return json({ error: 'Review not found' }, 404);
+        return json(updated);
+      }
+
+      // ── /api/reviews/:id (GET, PUT, DELETE) ──
+      const reviewIdMatch = pathname.match(/^\/api\/reviews\/([^/]+)$/);
+      if (reviewIdMatch) {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const reviewId = reviewIdMatch[1];
+
+        // GET single review
+        if (request.method === 'GET') {
+          const row = await env.DB.prepare(
+            "SELECT r.*, m.name as masjid_name FROM reviews r LEFT JOIN masjid m ON r.masjid_id = m.id WHERE r.id = ?"
+          ).bind(reviewId).first();
+          if (!row) return json({ error: 'Review not found' }, 404);
+          return json(row);
+        }
+
+        // PUT update review
+        if (request.method === 'PUT') {
+          const body = await request.json();
+          const allowedCols = ['reviewer_name', 'rating', 'short_description', 'source_url', 'source_platform', 'masjid_id'];
+
+          const setClauses = [];
+          const vals = [];
+          for (const col of allowedCols) {
+            if (body[col] !== undefined) {
+              setClauses.push(col + ' = ?');
+              vals.push(body[col]);
+            }
+          }
+
+          if (setClauses.length === 0) return json({ error: 'Tidak ada data untuk diperbarui' }, 400);
+
+          vals.push(reviewId);
+          await env.DB.prepare(
+            'UPDATE reviews SET ' + setClauses.join(', ') + ' WHERE id = ?'
+          ).bind(...vals).run();
+
+          const updated = await env.DB.prepare(
+            "SELECT r.*, m.name as masjid_name FROM reviews r LEFT JOIN masjid m ON r.masjid_id = m.id WHERE r.id = ?"
+          ).bind(reviewId).first();
+          return json(updated);
+        }
+
+        // DELETE review
+        if (request.method === 'DELETE') {
+          if (admin.role !== 'super_admin') {
+            return json({ error: 'Hanya super_admin yang dapat menghapus review' }, 403);
+          }
+          await env.DB.prepare('DELETE FROM reviews WHERE id = ?').bind(reviewId).run();
+          return json({ ok: true });
+        }
+      }
+
+      // ── GET /api/users ──
+      if (pathname === '/api/users' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const { results } = await env.DB.prepare(
+          "SELECT u.*, COUNT(r.id) as review_count FROM users u LEFT JOIN reviews r ON r.user_id = u.id GROUP BY u.id ORDER BY u.created_at DESC"
+        ).all();
+        return json(results);
+      }
+
+      // ── GET /api/users/search (for admin promote dialog) ──
+      if (pathname === '/api/users/search' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') return json({ error: 'Forbidden' }, 403);
+        const url = new URL(request.url);
+        const q = (url.searchParams.get('q') || '').trim();
+        if (!q || q.length < 3) return json({ error: 'Minimal 3 karakter' }, 400);
+        const { results } = await env.DB.prepare(
+          "SELECT id, name, wa_number, role FROM users WHERE role = 'user' AND (name LIKE ? OR wa_number LIKE ?) LIMIT 10"
+        ).bind('%' + q + '%', '%' + q + '%').all();
+        return json(results);
+      }
+
+      // ── POST /api/users/:id/force-logout (must be before /api/users/:id) ──
+      const forceLogoutMatch = pathname.match(/^\/api\/users\/([^/]+)\/force-logout$/);
+      if (forceLogoutMatch && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const userId = forceLogoutMatch[1];
+        await env.DB.prepare('DELETE FROM user_sessions WHERE user_id = ?').bind(userId).run();
+        return json({ ok: true });
+      }
+
+      // ── PATCH /api/users/:id/role (must be before generic /api/users/:id) ──
+      const userRoleMatch = pathname.match(/^\/api\/users\/([^/]+)\/role$/);
+      if (userRoleMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') return json({ error: 'Forbidden' }, 403);
+        const userId = userRoleMatch[1];
+        const body = await request.json();
+        const newRole = body.role;
+        if (!['user', 'admin', 'super_admin'].includes(newRole)) {
+          return json({ error: 'Role tidak valid' }, 400);
+        }
+        if (admin.id === userId) {
+          return json({ error: 'Tidak dapat mengubah role diri sendiri' }, 400);
+        }
+        const target = await env.DB.prepare('SELECT id, role FROM users WHERE id = ?').bind(userId).first();
+        if (!target) return json({ error: 'User tidak ditemukan' }, 404);
+        await env.DB.prepare('UPDATE users SET role = ? WHERE id = ?').bind(newRole, userId).run();
+        // If demoting, clear their sessions
+        if (newRole === 'user' && target.role !== 'user') {
+          await env.DB.prepare('DELETE FROM user_sessions WHERE user_id = ?').bind(userId).run();
+        }
+        const updated = await env.DB.prepare('SELECT id, name, wa_number, role, created_at FROM users WHERE id = ?').bind(userId).first();
+        return json(updated);
+      }
+
+      // ── GET/PUT /api/users/:id ──
+      const userIdMatch = pathname.match(/^\/api\/users\/([^/]+)$/);
+      if (userIdMatch) {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const userId = userIdMatch[1];
+
+        if (request.method === 'GET') {
+          const user = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
+          if (!user) return json({ error: 'User not found' }, 404);
+          const { results: reviews } = await env.DB.prepare(
+            "SELECT r.*, m.name as masjid_name FROM reviews r LEFT JOIN masjid m ON r.masjid_id = m.id WHERE r.user_id = ? ORDER BY r.created_at DESC"
+          ).bind(userId).all();
+          return json({ user, reviews });
+        }
+
+        if (request.method === 'PUT') {
+          const body = await request.json();
+          const name = body.name ? String(body.name).trim() : null;
+          const city = body.city ? String(body.city).trim() : null;
+          if (!name) return json({ error: 'Nama tidak boleh kosong' }, 400);
+          await env.DB.prepare('UPDATE users SET name = ?, city = ? WHERE id = ?').bind(name, city || null, userId).run();
+          const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
+          return json(updated);
+        }
+      }
+
+      // ── GET /api/admins ──
+      if (pathname === '/api/admins' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') return json({ error: 'Forbidden' }, 403);
+        const { results } = await env.DB.prepare(
+          "SELECT id, name, wa_number, role, created_at FROM users WHERE role IN ('admin', 'super_admin') ORDER BY created_at ASC"
+        ).all();
+        return json(results);
+      }
+
+      // ── Serve HTML for all other routes ──
+      return new Response(HTML, {
+        headers: { 'Content-Type': 'text/html;charset=UTF-8' },
+      });
+
+    } catch (err) {
+      return json({ error: 'Internal server error' }, 500);
+    }
+  },
+};

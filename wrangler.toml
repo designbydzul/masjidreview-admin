@@ -1,0 +1,15 @@
+name = "masjidreview-admin"
+main = "src/worker/index.js"
+compatibility_date = "2024-01-01"
+
+[ai]
+binding = "AI"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "masjidreview-db"
+database_id = "379063b2-ef67-4ccd-b802-202256e3a09c"
+
+[[r2_buckets]]
+binding = "IMAGES"
+bucket_name = "masjidreview-images"

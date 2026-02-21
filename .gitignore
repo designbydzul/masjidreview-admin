@@ -1,0 +1,4 @@
+node_modules/
+dist/
+src/worker/frontend.js
+.DS_Store
