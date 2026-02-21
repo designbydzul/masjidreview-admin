@@ -341,6 +341,119 @@ async function handleFonnteWebhook(request, env, ctx) {
   }
 }
 
+// ── Database Migrations ──
+
+let migrated = false;
+
+const FACILITY_SEEDS = [
+  { id: 'fac-ramadan-takjil', name: 'Takjil', grp: 'ramadhan', input_type: 'toggle', options: null, sort_order: 1 },
+  { id: 'fac-ramadan-makanan', name: 'Makanan Berat', grp: 'ramadhan', input_type: 'toggle', options: null, sort_order: 2 },
+  { id: 'fac-ramadan-ceramah', name: 'Ceramah Tarawih', grp: 'ramadhan', input_type: 'toggle', options: null, sort_order: 3 },
+  { id: 'fac-ramadan-mushaf', name: 'Mushaf Al-Quran', grp: 'ramadhan', input_type: 'toggle', options: null, sort_order: 4 },
+  { id: 'fac-ramadan-itikaf', name: "I'tikaf", grp: 'ramadhan', input_type: 'toggle', options: null, sort_order: 5 },
+  { id: 'fac-ramadan-rakaat', name: 'Rakaat Tarawih', grp: 'ramadhan', input_type: 'dropdown', options: '["11","23"]', sort_order: 6 },
+  { id: 'fac-ramadan-tempo', name: 'Tempo Shalat', grp: 'ramadhan', input_type: 'dropdown', options: '["khusyuk","sedang","cepat"]', sort_order: 7 },
+  { id: 'fac-masjid-parkir', name: 'Parkir Luas', grp: 'masjid', input_type: 'toggle', options: null, sort_order: 1 },
+  { id: 'fac-akhwat-wudhu', name: 'Wudhu Terpisah', grp: 'akhwat', input_type: 'toggle', options: null, sort_order: 1 },
+  { id: 'fac-akhwat-mukena', name: 'Mukena Tersedia', grp: 'akhwat', input_type: 'toggle', options: null, sort_order: 2 },
+  { id: 'fac-akhwat-ac', name: 'AC', grp: 'akhwat', input_type: 'toggle', options: null, sort_order: 3 },
+  { id: 'fac-akhwat-entrance', name: 'Pintu Masuk Aman', grp: 'akhwat', input_type: 'toggle', options: null, sort_order: 4 },
+];
+
+const OLD_COL_TO_FACILITY = {
+  ramadan_takjil: { id: 'fac-ramadan-takjil', type: 'toggle' },
+  ramadan_makanan_berat: { id: 'fac-ramadan-makanan', type: 'toggle' },
+  ramadan_ceramah_tarawih: { id: 'fac-ramadan-ceramah', type: 'toggle' },
+  ramadan_mushaf_alquran: { id: 'fac-ramadan-mushaf', type: 'toggle' },
+  ramadan_itikaf: { id: 'fac-ramadan-itikaf', type: 'toggle' },
+  ramadan_parkir: { id: 'fac-masjid-parkir', type: 'toggle' },
+  ramadan_rakaat: { id: 'fac-ramadan-rakaat', type: 'value' },
+  ramadan_tempo: { id: 'fac-ramadan-tempo', type: 'value' },
+  akhwat_wudhu_private: { id: 'fac-akhwat-wudhu', type: 'toggle' },
+  akhwat_mukena_available: { id: 'fac-akhwat-mukena', type: 'toggle' },
+  akhwat_ac_available: { id: 'fac-akhwat-ac', type: 'toggle' },
+  akhwat_safe_entrance: { id: 'fac-akhwat-entrance', type: 'toggle' },
+};
+
+async function runMigrations(env) {
+  if (migrated) return;
+
+  await env.DB.prepare(
+    "CREATE TABLE IF NOT EXISTS _migrations (version INTEGER PRIMARY KEY, applied_at TEXT DEFAULT (datetime('now')))"
+  ).run();
+
+  const latest = await env.DB.prepare('SELECT MAX(version) as v FROM _migrations').first();
+  const currentVersion = latest?.v || 0;
+
+  if (currentVersion < 1) {
+    // Create facilities table
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS facilities (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        grp TEXT NOT NULL,
+        input_type TEXT NOT NULL,
+        options TEXT,
+        is_active INTEGER DEFAULT 1,
+        sort_order INTEGER DEFAULT 0,
+        created_at TEXT DEFAULT (datetime('now'))
+      )
+    `).run();
+
+    // Create masjid_facilities table
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS masjid_facilities (
+        id TEXT PRIMARY KEY,
+        masjid_id TEXT NOT NULL,
+        facility_id TEXT NOT NULL,
+        value TEXT NOT NULL,
+        created_at TEXT DEFAULT (datetime('now')),
+        UNIQUE(masjid_id, facility_id)
+      )
+    `).run();
+
+    // Seed facility definitions
+    const seedStmts = FACILITY_SEEDS.map((f) =>
+      env.DB.prepare(
+        'INSERT OR IGNORE INTO facilities (id, name, grp, input_type, options, sort_order) VALUES (?, ?, ?, ?, ?, ?)'
+      ).bind(f.id, f.name, f.grp, f.input_type, f.options, f.sort_order)
+    );
+    await env.DB.batch(seedStmts);
+
+    // Migrate existing masjid data into masjid_facilities
+    const { results: masjids } = await env.DB.prepare('SELECT * FROM masjid').all();
+    for (const m of masjids) {
+      const batch = [];
+      for (const [col, mapping] of Object.entries(OLD_COL_TO_FACILITY)) {
+        const val = m[col];
+        if (val === null || val === undefined || val === '') continue;
+        if (mapping.type === 'toggle') {
+          if (val === 'ya' || val === 1 || val === '1') {
+            batch.push(
+              env.DB.prepare(
+                "INSERT OR IGNORE INTO masjid_facilities (id, masjid_id, facility_id, value) VALUES (?, ?, ?, 'ya')"
+              ).bind(crypto.randomUUID(), m.id, mapping.id)
+            );
+          }
+        } else {
+          batch.push(
+            env.DB.prepare(
+              'INSERT OR IGNORE INTO masjid_facilities (id, masjid_id, facility_id, value) VALUES (?, ?, ?, ?)'
+            ).bind(crypto.randomUUID(), m.id, mapping.id, String(val))
+          );
+        }
+      }
+      if (batch.length > 0) {
+        await env.DB.batch(batch);
+      }
+    }
+
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (1)').run();
+  }
+
+  migrated = true;
+}
+
 // ── Worker Entry Point ──
 
 export default {
@@ -348,6 +461,8 @@ export default {
     const { pathname } = new URL(request.url);
 
     try {
+      // Run database migrations
+      await runMigrations(env);
       // ── POST /webhook/fonnte (no auth required) ──
       if (pathname === '/webhook/fonnte' && request.method === 'POST') {
         return handleFonnteWebhook(request, env, ctx);
@@ -512,6 +627,106 @@ export default {
         return json(stats);
       }
 
+      // ── PATCH /api/facilities/:id/toggle ──
+      const facToggleMatch = pathname.match(/^\/api\/facilities\/([^/]+)\/toggle$/);
+      if (facToggleMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const facId = facToggleMatch[1];
+        await env.DB.prepare(
+          'UPDATE facilities SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?'
+        ).bind(facId).run();
+
+        const updated = await env.DB.prepare('SELECT * FROM facilities WHERE id = ?').bind(facId).first();
+        if (!updated) return json({ error: 'Facility not found' }, 404);
+        return json(updated);
+      }
+
+      // ── GET /api/facilities ──
+      if (pathname === '/api/facilities' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const { results } = await env.DB.prepare('SELECT * FROM facilities ORDER BY grp, sort_order').all();
+        return json(results);
+      }
+
+      // ── POST /api/facilities ──
+      if (pathname === '/api/facilities' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const body = await request.json();
+        if (!body.name || !body.grp || !body.input_type) {
+          return json({ error: 'name, grp, dan input_type wajib diisi' }, 400);
+        }
+        if (!['toggle', 'dropdown', 'number'].includes(body.input_type)) {
+          return json({ error: 'input_type harus toggle, dropdown, atau number' }, 400);
+        }
+        if (!['ramadhan', 'masjid', 'akhwat'].includes(body.grp)) {
+          return json({ error: 'grp harus ramadhan, masjid, atau akhwat' }, 400);
+        }
+
+        const id = crypto.randomUUID();
+        const options = body.input_type === 'dropdown' && body.options
+          ? (typeof body.options === 'string' ? body.options : JSON.stringify(body.options))
+          : null;
+        const sort_order = body.sort_order || 0;
+
+        await env.DB.prepare(
+          'INSERT INTO facilities (id, name, grp, input_type, options, sort_order) VALUES (?, ?, ?, ?, ?, ?)'
+        ).bind(id, body.name, body.grp, body.input_type, options, sort_order).run();
+
+        const created = await env.DB.prepare('SELECT * FROM facilities WHERE id = ?').bind(id).first();
+        return json(created, 201);
+      }
+
+      // ── /api/facilities/:id (PUT, DELETE) ──
+      const facIdMatch = pathname.match(/^\/api\/facilities\/([^/]+)$/);
+      if (facIdMatch) {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const facId = facIdMatch[1];
+
+        // PUT update
+        if (request.method === 'PUT') {
+          const body = await request.json();
+          const setClauses = [];
+          const vals = [];
+
+          for (const col of ['name', 'grp', 'input_type', 'sort_order', 'is_active']) {
+            if (body[col] !== undefined) {
+              setClauses.push(col + ' = ?');
+              vals.push(body[col]);
+            }
+          }
+          if (body.options !== undefined) {
+            setClauses.push('options = ?');
+            vals.push(body.options ? (typeof body.options === 'string' ? body.options : JSON.stringify(body.options)) : null);
+          }
+
+          if (setClauses.length === 0) return json({ error: 'Tidak ada data untuk diperbarui' }, 400);
+
+          vals.push(facId);
+          await env.DB.prepare('UPDATE facilities SET ' + setClauses.join(', ') + ' WHERE id = ?').bind(...vals).run();
+          const updated = await env.DB.prepare('SELECT * FROM facilities WHERE id = ?').bind(facId).first();
+          if (!updated) return json({ error: 'Facility not found' }, 404);
+          return json(updated);
+        }
+
+        // DELETE
+        if (request.method === 'DELETE') {
+          if (admin.role !== 'super_admin') {
+            return json({ error: 'Hanya super_admin yang dapat menghapus fasilitas' }, 403);
+          }
+          await env.DB.prepare('DELETE FROM masjid_facilities WHERE facility_id = ?').bind(facId).run();
+          await env.DB.prepare('DELETE FROM facilities WHERE id = ?').bind(facId).run();
+          return json({ ok: true });
+        }
+      }
+
       // ── GET /api/masjids ──
       if (pathname === '/api/masjids' && request.method === 'GET') {
         const admin = await getSession(request, env);
@@ -563,6 +778,20 @@ export default {
         await env.DB.prepare(
           'INSERT INTO masjid (' + cols.join(',') + ') VALUES (' + placeholders.join(',') + ')'
         ).bind(...vals).run();
+
+        // Handle dynamic facilities
+        if (body.facilities && typeof body.facilities === 'object') {
+          const facBatch = [];
+          for (const [facId, value] of Object.entries(body.facilities)) {
+            if (value === null || value === '' || value === undefined) continue;
+            facBatch.push(
+              env.DB.prepare(
+                'INSERT INTO masjid_facilities (id, masjid_id, facility_id, value) VALUES (?, ?, ?, ?)'
+              ).bind(crypto.randomUUID(), id, facId, String(value))
+            );
+          }
+          if (facBatch.length > 0) await env.DB.batch(facBatch);
+        }
 
         const created = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(id).first();
         return json(created, 201);
@@ -674,6 +903,16 @@ export default {
         if (request.method === 'GET') {
           const row = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(masjidId).first();
           if (!row) return json({ error: 'Masjid not found' }, 404);
+
+          // Attach dynamic facilities
+          const { results: facRows } = await env.DB.prepare(
+            'SELECT mf.facility_id, mf.value FROM masjid_facilities mf WHERE mf.masjid_id = ?'
+          ).bind(masjidId).all();
+          row.facilities = {};
+          for (const f of facRows) {
+            row.facilities[f.facility_id] = f.value;
+          }
+
           return json(row);
         }
 
@@ -697,6 +936,25 @@ export default {
           await env.DB.prepare(
             'UPDATE masjid SET ' + setClauses.join(', ') + ' WHERE id = ?'
           ).bind(...vals).run();
+
+          // Handle dynamic facilities
+          if (body.facilities && typeof body.facilities === 'object') {
+            const facBatch = [];
+            for (const [facId, value] of Object.entries(body.facilities)) {
+              if (value === null || value === '' || value === undefined || value === 'tidak') {
+                facBatch.push(
+                  env.DB.prepare('DELETE FROM masjid_facilities WHERE masjid_id = ? AND facility_id = ?').bind(masjidId, facId)
+                );
+              } else {
+                facBatch.push(
+                  env.DB.prepare(
+                    "INSERT INTO masjid_facilities (id, masjid_id, facility_id, value) VALUES (?, ?, ?, ?) ON CONFLICT(masjid_id, facility_id) DO UPDATE SET value = excluded.value"
+                  ).bind(crypto.randomUUID(), masjidId, facId, String(value))
+                );
+              }
+            }
+            if (facBatch.length > 0) await env.DB.batch(facBatch);
+          }
 
           const updated = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(masjidId).first();
           return json(updated);

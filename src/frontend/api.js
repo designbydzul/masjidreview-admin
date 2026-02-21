@@ -57,3 +57,10 @@ export const changeUserRole = (id, role) => apiFetch('/api/users/' + id + '/role
 
 // Admins
 export const getAdmins = () => apiFetch('/api/admins');
+
+// Facilities
+export const getFacilities = () => apiFetch('/api/facilities');
+export const createFacility = (data) => apiFetch('/api/facilities', { method: 'POST', body: JSON.stringify(data) });
+export const updateFacility = (id, data) => apiFetch('/api/facilities/' + id, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteFacility = (id) => apiFetch('/api/facilities/' + id, { method: 'DELETE' });
+export const toggleFacility = (id) => apiFetch('/api/facilities/' + id + '/toggle', { method: 'PATCH' });

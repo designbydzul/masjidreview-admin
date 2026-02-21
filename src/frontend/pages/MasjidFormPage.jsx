@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { X, Plus } from 'lucide-react';
-import { getMasjid, createMasjid, updateMasjid } from '../api';
+import { getMasjid, createMasjid, updateMasjid, getFacilities } from '../api';
 import { useToast } from '../contexts/ToastContext';
 import FormCard from '../components/FormCard';
 import ToggleSwitch from '../components/ToggleSwitch';
@@ -11,12 +11,15 @@ import { Label } from '../components/ui/label';
 import { Select } from '../components/ui/select';
 import { Button } from '../components/ui/button';
 
+const GROUP_LABELS = {
+  ramadhan: 'Fasilitas Ramadhan',
+  masjid: 'Fasilitas Masjid',
+  akhwat: 'Fasilitas Akhwat',
+};
+
 const emptyForm = {
   name: '', city: '', address: '', photo_url: '', google_maps_url: '', latitude: '', longitude: '', ig_post_url: '',
   info_label: '', info_photos: '[]',
-  ramadan_takjil: 0, ramadan_makanan_berat: 0, ramadan_ceramah_tarawih: 0, ramadan_mushaf_alquran: 0, ramadan_itikaf: 0, ramadan_parkir: 0,
-  ramadan_rakaat: '', ramadan_tempo: '',
-  akhwat_wudhu_private: 0, akhwat_mukena_available: 0, akhwat_ac_available: 0, akhwat_safe_entrance: 0,
 };
 
 export default function MasjidFormPage() {
@@ -27,26 +30,42 @@ export default function MasjidFormPage() {
 
   const [form, setForm] = useState(emptyForm);
   const [infoPhotos, setInfoPhotos] = useState(['']);
-  const [loading, setLoading] = useState(isEdit);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // Dynamic facilities
+  const [facilities, setFacilities] = useState([]);
+  const [facilityValues, setFacilityValues] = useState({});
+
   useEffect(() => {
-    if (isEdit) {
-      getMasjid(id)
-        .then((data) => {
+    const loadAll = async () => {
+      try {
+        const facData = await getFacilities();
+        setFacilities(facData.filter((f) => f.is_active));
+
+        if (isEdit) {
+          const data = await getMasjid(id);
           setForm(data);
+          if (data.facilities) setFacilityValues(data.facilities);
           try {
             const photos = JSON.parse(data.info_photos || '[]');
             setInfoPhotos(photos.length > 0 ? photos : ['']);
           } catch { setInfoPhotos(['']); }
-        })
-        .catch((err) => showToast(err.message, 'error'))
-        .finally(() => setLoading(false));
-    }
+        }
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadAll();
   }, [id]);
 
   const set = (key, val) => setForm((prev) => ({ ...prev, [key]: val }));
-  const toggle = (key) => set(key, form[key] ? 0 : 1);
+
+  const setFacValue = (facId, value) => {
+    setFacilityValues((prev) => ({ ...prev, [facId]: value }));
+  };
 
   const addInfoPhoto = () => {
     if (infoPhotos.length < 5) setInfoPhotos([...infoPhotos, '']);
@@ -70,7 +89,11 @@ export default function MasjidFormPage() {
     }
     setSaving(true);
     try {
-      const payload = { ...form, info_photos: JSON.stringify(infoPhotos.filter(Boolean)) };
+      const payload = {
+        ...form,
+        info_photos: JSON.stringify(infoPhotos.filter(Boolean)),
+        facilities: facilityValues,
+      };
       if (isEdit) {
         await updateMasjid(id, payload);
         showToast('Masjid diperbarui');
@@ -84,6 +107,59 @@ export default function MasjidFormPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Group facilities by grp
+  const facilityGroups = {};
+  for (const fac of facilities) {
+    if (!facilityGroups[fac.grp]) facilityGroups[fac.grp] = [];
+    facilityGroups[fac.grp].push(fac);
+  }
+
+  const renderFacilityInput = (fac) => {
+    const value = facilityValues[fac.id] || '';
+
+    if (fac.input_type === 'toggle') {
+      return (
+        <ToggleSwitch
+          key={fac.id}
+          label={fac.name}
+          checked={value === 'ya'}
+          onChange={() => setFacValue(fac.id, value === 'ya' ? '' : 'ya')}
+        />
+      );
+    }
+
+    if (fac.input_type === 'dropdown') {
+      let options = [];
+      try { options = JSON.parse(fac.options || '[]'); } catch {}
+      return (
+        <div key={fac.id}>
+          <Label>{fac.name}</Label>
+          <Select value={value} onChange={(e) => setFacValue(fac.id, e.target.value)}>
+            <option value="">-- Pilih --</option>
+            {options.map((opt) => (
+              <option key={opt} value={opt}>{opt}</option>
+            ))}
+          </Select>
+        </div>
+      );
+    }
+
+    if (fac.input_type === 'number') {
+      return (
+        <div key={fac.id}>
+          <Label>{fac.name}</Label>
+          <Input
+            type="number"
+            value={value}
+            onChange={(e) => setFacValue(fac.id, e.target.value)}
+          />
+        </div>
+      );
+    }
+
+    return null;
   };
 
   if (loading) return <p className="text-text-2 text-sm py-8 text-center">Memuat data...</p>;
@@ -168,44 +244,28 @@ export default function MasjidFormPage() {
           </div>
         </FormCard>
 
-        <FormCard title="Fasilitas Ramadhan">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
-            <ToggleSwitch label="Takjil" checked={!!form.ramadan_takjil} onChange={() => toggle('ramadan_takjil')} />
-            <ToggleSwitch label="Makanan Berat" checked={!!form.ramadan_makanan_berat} onChange={() => toggle('ramadan_makanan_berat')} />
-            <ToggleSwitch label="Ceramah Tarawih" checked={!!form.ramadan_ceramah_tarawih} onChange={() => toggle('ramadan_ceramah_tarawih')} />
-            <ToggleSwitch label="Mushaf Al-Quran" checked={!!form.ramadan_mushaf_alquran} onChange={() => toggle('ramadan_mushaf_alquran')} />
-            <ToggleSwitch label="I'tikaf" checked={!!form.ramadan_itikaf} onChange={() => toggle('ramadan_itikaf')} />
-            <ToggleSwitch label="Parkir Luas" checked={!!form.ramadan_parkir} onChange={() => toggle('ramadan_parkir')} />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <Label>Rakaat Tarawih</Label>
-              <Select value={form.ramadan_rakaat || ''} onChange={(e) => set('ramadan_rakaat', e.target.value)}>
-                <option value="">-- Pilih --</option>
-                <option value="11">11 Rakaat</option>
-                <option value="23">23 Rakaat</option>
-              </Select>
-            </div>
-            <div>
-              <Label>Tempo Shalat</Label>
-              <Select value={form.ramadan_tempo || ''} onChange={(e) => set('ramadan_tempo', e.target.value)}>
-                <option value="">-- Pilih --</option>
-                <option value="khusyuk">Khusyuk (Pelan)</option>
-                <option value="sedang">Sedang</option>
-                <option value="cepat">Cepat</option>
-              </Select>
-            </div>
-          </div>
-        </FormCard>
+        {['ramadhan', 'masjid', 'akhwat'].map((grp) => {
+          const groupFacs = facilityGroups[grp];
+          if (!groupFacs || groupFacs.length === 0) return null;
 
-        <FormCard title="Fasilitas Akhwat">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <ToggleSwitch label="Wudhu Terpisah" checked={!!form.akhwat_wudhu_private} onChange={() => toggle('akhwat_wudhu_private')} />
-            <ToggleSwitch label="Mukena Tersedia" checked={!!form.akhwat_mukena_available} onChange={() => toggle('akhwat_mukena_available')} />
-            <ToggleSwitch label="AC" checked={!!form.akhwat_ac_available} onChange={() => toggle('akhwat_ac_available')} />
-            <ToggleSwitch label="Pintu Masuk Aman" checked={!!form.akhwat_safe_entrance} onChange={() => toggle('akhwat_safe_entrance')} />
-          </div>
-        </FormCard>
+          const toggles = groupFacs.filter((f) => f.input_type === 'toggle');
+          const others = groupFacs.filter((f) => f.input_type !== 'toggle');
+
+          return (
+            <FormCard key={grp} title={GROUP_LABELS[grp]}>
+              {toggles.length > 0 && (
+                <div className={others.length > 0 ? 'grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4' : 'grid grid-cols-1 sm:grid-cols-2 gap-4'}>
+                  {toggles.map((fac) => renderFacilityInput(fac))}
+                </div>
+              )}
+              {others.length > 0 && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {others.map((fac) => renderFacilityInput(fac))}
+                </div>
+              )}
+            </FormCard>
+          );
+        })}
       </form>
     </div>
   );

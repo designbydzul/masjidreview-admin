@@ -14,6 +14,7 @@ import ReviewFormPage from './pages/ReviewFormPage';
 import UserListPage from './pages/UserListPage';
 import UserDetailPage from './pages/UserDetailPage';
 import AdminListPage from './pages/AdminListPage';
+import SettingsPage from './pages/SettingsPage';
 
 export default function App() {
   return (
@@ -40,6 +41,7 @@ export default function App() {
                 <Route path="users" element={<UserListPage />} />
                 <Route path="users/:id" element={<UserDetailPage />} />
                 <Route path="admins" element={<AdminListPage />} />
+                <Route path="settings" element={<SettingsPage />} />
               </Route>
             </Routes>
             <Toaster position="bottom-right" richColors />
