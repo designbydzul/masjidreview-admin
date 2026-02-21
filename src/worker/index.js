@@ -970,6 +970,70 @@ export default {
         }
       }
 
+      // ── POST /reviews (public — web submissions) ──
+      if (pathname === '/reviews' && request.method === 'POST') {
+        const body = await request.json();
+        if (!body.masjid_id || !body.reviewer_name) {
+          return json({ error: 'masjid_id dan reviewer_name wajib diisi' }, 400);
+        }
+
+        const id = crypto.randomUUID();
+        const status = body.source_platform === 'web' ? 'approved' : 'pending';
+        const wa = body.wa_number ? normalizeWA(body.wa_number) : null;
+        const matchedUser = wa ? await env.DB.prepare('SELECT id FROM users WHERE wa_number = ?').bind(wa).first() : null;
+
+        await env.DB.prepare(
+          "INSERT INTO reviews (id, masjid_id, reviewer_name, rating, short_description, source_platform, source_url, status, wa_number, user_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))"
+        ).bind(
+          id,
+          body.masjid_id,
+          body.reviewer_name,
+          body.rating ? Number(body.rating) : null,
+          body.short_description || null,
+          body.source_platform || null,
+          body.source_url || null,
+          status,
+          wa || null,
+          matchedUser ? matchedUser.id : null
+        ).run();
+
+        const created = await env.DB.prepare(
+          "SELECT r.*, m.name as masjid_name FROM reviews r LEFT JOIN masjid m ON r.masjid_id = m.id WHERE r.id = ?"
+        ).bind(id).first();
+        return json(created, 201);
+      }
+
+      // ── POST /api/reviews (admin — always approved) ──
+      if (pathname === '/api/reviews' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const body = await request.json();
+        if (!body.masjid_id || !body.reviewer_name) {
+          return json({ error: 'masjid_id dan reviewer_name wajib diisi' }, 400);
+        }
+
+        const id = crypto.randomUUID();
+
+        await env.DB.prepare(
+          "INSERT INTO reviews (id, masjid_id, reviewer_name, rating, short_description, source_platform, source_url, status, validated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, datetime('now'))"
+        ).bind(
+          id,
+          body.masjid_id,
+          body.reviewer_name,
+          body.rating ? Number(body.rating) : null,
+          body.short_description || null,
+          body.source_platform || null,
+          body.source_url || null,
+          admin.name
+        ).run();
+
+        const created = await env.DB.prepare(
+          "SELECT r.*, m.name as masjid_name FROM reviews r LEFT JOIN masjid m ON r.masjid_id = m.id WHERE r.id = ?"
+        ).bind(id).first();
+        return json(created, 201);
+      }
+
       // ── GET /api/reviews ──
       if (pathname === '/api/reviews' && request.method === 'GET') {
         const admin = await getSession(request, env);
@@ -1178,8 +1242,13 @@ export default {
           const body = await request.json();
           const name = body.name ? String(body.name).trim() : null;
           const city = body.city ? String(body.city).trim() : null;
+          const age_range = body.age_range !== undefined ? (body.age_range ? String(body.age_range).trim() : null) : undefined;
           if (!name) return json({ error: 'Nama tidak boleh kosong' }, 400);
-          await env.DB.prepare('UPDATE users SET name = ?, city = ? WHERE id = ?').bind(name, city || null, userId).run();
+          if (age_range !== undefined) {
+            await env.DB.prepare('UPDATE users SET name = ?, city = ?, age_range = ? WHERE id = ?').bind(name, city || null, age_range, userId).run();
+          } else {
+            await env.DB.prepare('UPDATE users SET name = ?, city = ? WHERE id = ?').bind(name, city || null, userId).run();
+          }
           const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
           return json(updated);
         }

@@ -10,6 +10,7 @@ import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
+import { Select } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { formatWA, formatDate, truncate } from '../utils/format';
 
@@ -25,6 +26,7 @@ export default function UserDetailPage() {
   const [editModal, setEditModal] = useState(false);
   const [editName, setEditName] = useState('');
   const [editCity, setEditCity] = useState('');
+  const [editAgeRange, setEditAgeRange] = useState('');
 
   const loadData = () => {
     setLoading(true);
@@ -42,12 +44,13 @@ export default function UserDetailPage() {
   const handleEditOpen = () => {
     setEditName(user.name || '');
     setEditCity(user.city || '');
+    setEditAgeRange(user.age_range || '');
     setEditModal(true);
   };
 
   const handleEditSave = async () => {
     try {
-      await updateUser(id, { name: editName, city: editCity });
+      await updateUser(id, { name: editName, city: editCity, age_range: editAgeRange || null });
       showToast('User diperbarui');
       setEditModal(false);
       loadData();
@@ -101,10 +104,11 @@ export default function UserDetailPage() {
       {/* User info card */}
       <Card className="mb-5">
         <CardContent className="p-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
             <div><span className="text-xs text-text-3 block">Nama</span><span className="text-sm font-medium text-text">{user.name || '-'}</span></div>
             <div><span className="text-xs text-text-3 block">WhatsApp</span><span className="text-sm text-text">{formatWA(user.wa_number)}</span></div>
             <div><span className="text-xs text-text-3 block">Kota</span><span className="text-sm text-text">{user.city || '-'}</span></div>
+            <div><span className="text-xs text-text-3 block">Usia</span><span className="text-sm text-text">{user.age_range || '-'}</span></div>
             <div><span className="text-xs text-text-3 block">Bergabung</span><span className="text-sm text-text">{formatDate(user.created_at)}</span></div>
           </div>
           <Button variant="outline" size="sm" onClick={handleEditOpen} className="mt-4 text-green border-green hover:bg-green hover:text-white">
@@ -131,6 +135,19 @@ export default function UserDetailPage() {
             <div>
               <Label>Kota</Label>
               <Input value={editCity} onChange={(e) => setEditCity(e.target.value)} />
+            </div>
+            <div>
+              <Label>Rentang Usia</Label>
+              <Select value={editAgeRange} onChange={(e) => setEditAgeRange(e.target.value)}>
+                <option value="">Belum diatur</option>
+                <option value="<15">&lt;15</option>
+                <option value="16-20">16-20</option>
+                <option value="21-25">21-25</option>
+                <option value="26-30">26-30</option>
+                <option value="31-40">31-40</option>
+                <option value="41-50">41-50</option>
+                <option value="50+">50+</option>
+              </Select>
             </div>
           </div>
           <DialogFooter>

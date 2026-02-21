@@ -24,6 +24,7 @@ export default function UserListPage() {
     { key: 'name', label: 'Nama', render: (row) => <span className="font-medium">{row.name || '-'}</span> },
     { key: 'wa_number', label: 'WhatsApp', render: (row) => <span className="text-text-2">{formatWA(row.wa_number)}</span> },
     { key: 'city', label: 'Kota', render: (row) => row.city || '-' },
+    { key: 'age_range', label: 'Usia', render: (row) => row.age_range || '-' },
     { key: 'review_count', label: 'Reviews', render: (row) => <span className="font-heading font-medium">{row.review_count || 0}</span> },
     { key: 'created_at', label: 'Bergabung', render: (row) => <span className="text-text-3 text-xs">{formatDate(row.created_at)}</span> },
     {
