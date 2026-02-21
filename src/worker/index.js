@@ -1172,6 +1172,34 @@ export default {
         return json(results);
       }
 
+      // ── POST /api/users (admin — create user) ──
+      if (pathname === '/api/users' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const body = await request.json();
+        const name = body.name ? String(body.name).trim() : null;
+        const rawWA = body.wa_number ? normalizeWA(body.wa_number) : null;
+
+        if (!name) return json({ error: 'Nama wajib diisi' }, 400);
+        if (!rawWA || !/^62\d{8,13}$/.test(rawWA)) return json({ error: 'Nomor WA tidak valid' }, 400);
+
+        // Check duplicate
+        const existing = await env.DB.prepare('SELECT id FROM users WHERE wa_number = ?').bind(rawWA).first();
+        if (existing) return json({ error: 'Nomor WA sudah terdaftar' }, 409);
+
+        const id = crypto.randomUUID();
+        const city = body.city ? String(body.city).trim() : null;
+        const age_range = body.age_range ? String(body.age_range).trim() : null;
+
+        await env.DB.prepare(
+          "INSERT INTO users (id, name, wa_number, role, city, age_range, created_at) VALUES (?, ?, ?, 'user', ?, ?, datetime('now'))"
+        ).bind(id, name, rawWA, city, age_range).run();
+
+        const created = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
+        return json(created, 201);
+      }
+
       // ── GET /api/users/search (for admin promote dialog) ──
       if (pathname === '/api/users/search' && request.method === 'GET') {
         const admin = await getSession(request, env);

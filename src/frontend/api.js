@@ -40,6 +40,7 @@ export const uploadFile = (file, prefix) => {
 };
 
 // Reviews
+export const createReview = (data) => apiFetch('/api/reviews', { method: 'POST', body: JSON.stringify(data) });
 export const getReviews = (status) => apiFetch('/api/reviews' + (status ? '?status=' + status : ''));
 export const getReview = (id) => apiFetch('/api/reviews/' + id);
 export const updateReview = (id, data) => apiFetch('/api/reviews/' + id, { method: 'PUT', body: JSON.stringify(data) });
@@ -48,6 +49,7 @@ export const setReviewStatus = (id, status) => apiFetch('/api/reviews/' + id + '
 export const bulkReviewStatus = (ids, status) => apiFetch('/api/reviews/bulk-status', { method: 'PATCH', body: JSON.stringify({ ids, status }) });
 
 // Users
+export const createUser = (data) => apiFetch('/api/users', { method: 'POST', body: JSON.stringify(data) });
 export const getUsers = () => apiFetch('/api/users');
 export const searchUsers = (q) => apiFetch('/api/users/search?q=' + encodeURIComponent(q));
 export const getUser = (id) => apiFetch('/api/users/' + id);

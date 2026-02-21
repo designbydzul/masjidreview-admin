@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Building2, Plus } from 'lucide-react';
 import { getMasjids, setMasjidStatus, bulkMasjidStatus, deleteMasjid, getSimilarMasjids } from '../api';
@@ -9,6 +9,7 @@ import DataTable from '../components/DataTable';
 import FilterTabs from '../components/FilterTabs';
 import BulkBar from '../components/BulkBar';
 import Badge from '../components/Badge';
+import SearchFilter, { useSearchFilter } from '../components/SearchFilter';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 
@@ -23,6 +24,7 @@ export default function MasjidListPage() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [similarData, setSimilarData] = useState(null);
+  const { search, debouncedSearch, filterValues, handleSearchChange, handleFilterChange } = useSearchFilter();
 
   const loadData = async () => {
     try {
@@ -37,7 +39,23 @@ export default function MasjidListPage() {
 
   useEffect(() => { loadData(); }, []);
 
-  const filtered = filter === 'all' ? masjids : masjids.filter((m) => m.status === filter);
+  // Dynamic city options from loaded data
+  const cityOptions = useMemo(() => {
+    const cities = [...new Set(masjids.map((m) => m.city).filter(Boolean))].sort();
+    return cities.map((c) => ({ value: c, label: c }));
+  }, [masjids]);
+
+  const filtered = useMemo(() => {
+    let result = masjids;
+    if (filter !== 'all') result = result.filter((m) => m.status === filter);
+    if (debouncedSearch) {
+      const q = debouncedSearch.toLowerCase();
+      result = result.filter((m) => m.name?.toLowerCase().includes(q));
+    }
+    if (filterValues.city) result = result.filter((m) => m.city === filterValues.city);
+    return result;
+  }, [masjids, filter, debouncedSearch, filterValues]);
+
   const counts = {
     all: masjids.length,
     approved: masjids.filter((m) => m.status === 'approved').length,
@@ -138,6 +156,17 @@ export default function MasjidListPage() {
         ]}
         activeTab={filter}
         onTabChange={(t) => { setFilter(t); setSelectedIds(new Set()); }}
+      />
+
+      <SearchFilter
+        searchPlaceholder="Cari nama masjid..."
+        searchValue={search}
+        onSearchChange={handleSearchChange}
+        filters={[
+          { key: 'city', label: 'Kota', options: cityOptions },
+        ]}
+        filterValues={filterValues}
+        onFilterChange={handleFilterChange}
       />
 
       <BulkBar

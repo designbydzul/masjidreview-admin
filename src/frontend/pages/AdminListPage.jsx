@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { KeyRound, Plus } from 'lucide-react';
 import { getAdmins, searchUsers, changeUserRole } from '../api';
 import { useAuth } from '../contexts/AuthContext';
@@ -6,6 +6,7 @@ import { useToast } from '../contexts/ToastContext';
 import { useConfirm } from '../contexts/ConfirmContext';
 import DataTable from '../components/DataTable';
 import Badge from '../components/Badge';
+import SearchFilter, { useSearchFilter } from '../components/SearchFilter';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -25,6 +26,7 @@ export default function AdminListPage() {
   const [searchResults, setSearchResults] = useState([]);
   const [promoteRole, setPromoteRole] = useState('admin');
   const debounceRef = useRef(null);
+  const { search: listSearch, debouncedSearch: listDebouncedSearch, filterValues: listFilterValues, handleSearchChange: handleListSearchChange, handleFilterChange: handleListFilterChange } = useSearchFilter();
 
   const loadData = () => {
     getAdmins()
@@ -85,6 +87,21 @@ export default function AdminListPage() {
     }
   };
 
+  const roleOptions = [
+    { value: 'admin', label: 'Admin' },
+    { value: 'super_admin', label: 'Super Admin' },
+  ];
+
+  const filteredAdmins = useMemo(() => {
+    let result = admins;
+    if (listDebouncedSearch) {
+      const q = listDebouncedSearch.toLowerCase();
+      result = result.filter((a) => a.name?.toLowerCase().includes(q));
+    }
+    if (listFilterValues.role) result = result.filter((a) => a.role === listFilterValues.role);
+    return result;
+  }, [admins, listDebouncedSearch, listFilterValues]);
+
   const columns = [
     { key: 'name', label: 'Nama', render: (row) => <span className="font-medium">{row.name || '-'}</span> },
     { key: 'wa_number', label: 'WhatsApp', render: (row) => <span className="text-text-2">{formatWA(row.wa_number)}</span> },
@@ -122,7 +139,18 @@ export default function AdminListPage() {
         </Button>
       </div>
 
-      <DataTable columns={columns} data={admins} emptyIcon={KeyRound} emptyText="Tidak ada admin" />
+      <SearchFilter
+        searchPlaceholder="Cari nama admin..."
+        searchValue={listSearch}
+        onSearchChange={handleListSearchChange}
+        filters={[
+          { key: 'role', label: 'Role', options: roleOptions },
+        ]}
+        filterValues={listFilterValues}
+        onFilterChange={handleListFilterChange}
+      />
+
+      <DataTable columns={columns} data={filteredAdmins} emptyIcon={KeyRound} emptyText="Tidak ada admin" />
 
       {/* Promote dialog */}
       <Dialog open={showPromote} onOpenChange={(open) => {
