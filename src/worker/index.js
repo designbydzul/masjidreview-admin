@@ -727,6 +727,72 @@ export default {
         }
       }
 
+      // ── GET /api/facility-suggestions ──
+      if (pathname === '/api/facility-suggestions' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const url = new URL(request.url);
+        const masjidId = url.searchParams.get('masjid_id');
+        const status = url.searchParams.get('status');
+
+        let sql = `SELECT fs.*, f.name as facility_name, m.name as masjid_name
+          FROM facility_suggestions fs
+          LEFT JOIN facilities f ON fs.facility_id = f.id
+          JOIN masjid m ON fs.masjid_id = m.id
+          WHERE 1=1`;
+        const params = [];
+
+        if (masjidId) {
+          sql += ' AND fs.masjid_id = ?';
+          params.push(masjidId);
+        }
+        if (status) {
+          sql += ' AND fs.status = ?';
+          params.push(status);
+        }
+
+        sql += ' ORDER BY fs.created_at DESC';
+
+        const stmt = params.length > 0
+          ? env.DB.prepare(sql).bind(...params)
+          : env.DB.prepare(sql);
+        const { results } = await stmt.all();
+        return json(results);
+      }
+
+      // ── PATCH /api/facility-suggestions/:id ──
+      const facSugMatch = pathname.match(/^\/api\/facility-suggestions\/([^/]+)$/);
+      if (facSugMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const sugId = facSugMatch[1];
+        const body = await request.json();
+
+        if (!body.action || !['approve', 'reject'].includes(body.action)) {
+          return json({ error: 'action harus approve atau reject' }, 400);
+        }
+
+        const suggestion = await env.DB.prepare('SELECT * FROM facility_suggestions WHERE id = ?').bind(sugId).first();
+        if (!suggestion) return json({ error: 'Suggestion not found' }, 404);
+
+        if (body.action === 'reject') {
+          await env.DB.prepare("UPDATE facility_suggestions SET status = 'rejected' WHERE id = ?").bind(sugId).run();
+        } else {
+          // Approve: update status + upsert into masjid_facilities (only if facility_id exists)
+          await env.DB.prepare("UPDATE facility_suggestions SET status = 'approved' WHERE id = ?").bind(sugId).run();
+          if (suggestion.facility_id) {
+            await env.DB.prepare(
+              "INSERT INTO masjid_facilities (id, masjid_id, facility_id, value) VALUES (?, ?, ?, ?) ON CONFLICT(masjid_id, facility_id) DO UPDATE SET value = excluded.value"
+            ).bind(crypto.randomUUID(), suggestion.masjid_id, suggestion.facility_id, suggestion.suggested_value).run();
+          }
+        }
+
+        const updated = await env.DB.prepare('SELECT * FROM facility_suggestions WHERE id = ?').bind(sugId).first();
+        return json(updated);
+      }
+
       // ── GET /api/masjids ──
       if (pathname === '/api/masjids' && request.method === 'GET') {
         const admin = await getSession(request, env);

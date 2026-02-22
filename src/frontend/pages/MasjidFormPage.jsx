@@ -1,15 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { X, Plus } from 'lucide-react';
-import { getMasjid, getMasjids, createMasjid, updateMasjid, getFacilities } from '../api';
+import { X, Plus, Check } from 'lucide-react';
+import { getMasjid, getMasjids, createMasjid, updateMasjid, getFacilities, getFacilitySuggestions, actionFacilitySuggestion } from '../api';
 import { useToast } from '../contexts/ToastContext';
 import FormCard from '../components/FormCard';
+import Badge from '../components/Badge';
 import ToggleSwitch from '../components/ToggleSwitch';
 import PhotoUpload from '../components/PhotoUpload';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select } from '../components/ui/select';
 import { Button } from '../components/ui/button';
+import { formatDate, formatWA } from '../utils/format';
 
 const GROUP_LABELS = {
   ramadhan: 'Fasilitas Ramadhan',
@@ -40,6 +42,10 @@ export default function MasjidFormPage() {
   const [facilities, setFacilities] = useState([]);
   const [facilityValues, setFacilityValues] = useState({});
 
+  // Facility suggestions (edit mode only)
+  const [suggestions, setSuggestions] = useState([]);
+  const [sugFilter, setSugFilter] = useState('pending');
+
   useEffect(() => {
     const loadAll = async () => {
       try {
@@ -56,6 +62,11 @@ export default function MasjidFormPage() {
             const photos = JSON.parse(data.info_photos || '[]');
             setInfoPhotos(photos.length > 0 ? photos : ['']);
           } catch { setInfoPhotos(['']); }
+          // Load facility suggestions
+          try {
+            const sugs = await getFacilitySuggestions({ masjid_id: id });
+            setSuggestions(sugs);
+          } catch { /* ignore if table doesn't exist yet */ }
         }
       } catch (err) {
         showToast(err.message, 'error');
@@ -85,6 +96,35 @@ export default function MasjidFormPage() {
     next[idx] = val;
     setInfoPhotos(next);
   };
+
+  const reloadSuggestions = async () => {
+    try {
+      const sugs = await getFacilitySuggestions({ masjid_id: id });
+      setSuggestions(sugs);
+    } catch {}
+  };
+
+  const handleSuggestionAction = async (sugId, action) => {
+    try {
+      await actionFacilitySuggestion(sugId, action);
+      showToast(action === 'approve' ? 'Saran disetujui' : 'Saran ditolak');
+      await reloadSuggestions();
+      // If approved, refresh facility values to reflect the change
+      if (action === 'approve') {
+        const data = await getMasjid(id);
+        if (data.facilities) setFacilityValues(data.facilities);
+      }
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const pendingCount = useMemo(() => suggestions.filter((s) => s.status === 'pending').length, [suggestions]);
+
+  const filteredSuggestions = useMemo(() => {
+    if (sugFilter === 'all') return suggestions;
+    return suggestions.filter((s) => s.status === sugFilter);
+  }, [suggestions, sugFilter]);
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -274,6 +314,100 @@ export default function MasjidFormPage() {
             </FormCard>
           );
         })}
+
+        {/* Saran Fasilitas — edit mode only */}
+        {isEdit && suggestions.length > 0 && (
+          <FormCard title={
+            <span className="flex items-center gap-2">
+              Saran Fasilitas
+              {pendingCount > 0 && (
+                <span className="bg-amber-100 text-amber-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+                  {pendingCount} pending
+                </span>
+              )}
+            </span>
+          }>
+            {/* Filter pills */}
+            <div className="flex gap-2 mb-4">
+              {[
+                { key: 'pending', label: 'Pending' },
+                { key: 'approved', label: 'Disetujui' },
+                { key: 'rejected', label: 'Ditolak' },
+                { key: 'all', label: 'Semua' },
+              ].map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setSugFilter(key)}
+                  className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
+                    sugFilter === key
+                      ? 'bg-green text-white border-green'
+                      : 'bg-white text-text-2 border-border hover:border-green'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {filteredSuggestions.length === 0 ? (
+              <p className="text-text-3 text-sm py-4 text-center">Tidak ada saran dengan status ini.</p>
+            ) : (
+              <div className="overflow-x-auto -mx-2">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-left text-text-2">
+                      <th className="py-2 px-2 font-medium">Fasilitas</th>
+                      <th className="py-2 px-2 font-medium">Nilai Saran</th>
+                      <th className="py-2 px-2 font-medium">Diajukan Oleh</th>
+                      <th className="py-2 px-2 font-medium">Tanggal</th>
+                      <th className="py-2 px-2 font-medium">Status</th>
+                      <th className="py-2 px-2 font-medium">Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredSuggestions.map((sug) => (
+                      <tr key={sug.id} className="border-b border-border/50 hover:bg-gray-50">
+                        <td className="py-2.5 px-2 font-medium text-text">{sug.facility_name || <span className="text-text-3 italic">Lainnya</span>}</td>
+                        <td className="py-2.5 px-2 text-text">{sug.suggested_value}</td>
+                        <td className="py-2.5 px-2 text-text-2">{sug.submitted_by_wa ? formatWA(sug.submitted_by_wa) : '—'}</td>
+                        <td className="py-2.5 px-2 text-text-2 whitespace-nowrap">{formatDate(sug.created_at)}</td>
+                        <td className="py-2.5 px-2"><Badge status={sug.status} /></td>
+                        <td className="py-2.5 px-2">
+                          {sug.status === 'pending' && (
+                            <div className="flex gap-1.5">
+                              {sug.facility_id && (
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => handleSuggestionAction(sug.id, 'approve')}
+                                  className="h-7 px-2 text-xs"
+                                >
+                                  <Check className="h-3 w-3 mr-1" />
+                                  Setujui
+                                </Button>
+                              )}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleSuggestionAction(sug.id, 'reject')}
+                                className="h-7 px-2 text-xs text-red hover:border-red"
+                              >
+                                <X className="h-3 w-3 mr-1" />
+                                Tolak
+                              </Button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </FormCard>
+        )}
       </form>
     </div>
   );
