@@ -66,3 +66,11 @@ export const createFacility = (data) => apiFetch('/api/facilities', { method: 'P
 export const updateFacility = (id, data) => apiFetch('/api/facilities/' + id, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteFacility = (id) => apiFetch('/api/facilities/' + id, { method: 'DELETE' });
 export const toggleFacility = (id) => apiFetch('/api/facilities/' + id + '/toggle', { method: 'PATCH' });
+
+// Facility Suggestions
+export const getFacilitySuggestions = (params = {}) => {
+  const qs = new URLSearchParams(params).toString();
+  return apiFetch('/api/facility-suggestions' + (qs ? '?' + qs : ''));
+};
+export const actionFacilitySuggestion = (id, action) =>
+  apiFetch('/api/facility-suggestions/' + id, { method: 'PATCH', body: JSON.stringify({ action }) });
