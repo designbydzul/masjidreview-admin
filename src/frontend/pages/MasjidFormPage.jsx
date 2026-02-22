@@ -11,6 +11,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select } from '../components/ui/select';
 import { Button } from '../components/ui/button';
+import { SkeletonFormPage } from '../components/Skeleton';
 import { formatDate, formatWA } from '../utils/format';
 
 const GROUP_LABELS = {
@@ -207,7 +208,7 @@ export default function MasjidFormPage() {
     return null;
   };
 
-  if (loading) return <p className="text-text-2 text-sm py-8 text-center">Memuat data...</p>;
+  if (loading) return <SkeletonFormPage />;
 
   return (
     <div>

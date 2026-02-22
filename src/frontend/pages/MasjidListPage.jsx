@@ -14,6 +14,7 @@ import Pagination from '../components/Pagination';
 import usePagination from '../hooks/usePagination';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { SkeletonTablePage } from '../components/Skeleton';
 
 export default function MasjidListPage() {
   const { admin } = useAuth();
@@ -153,7 +154,7 @@ export default function MasjidListPage() {
     },
   ];
 
-  if (loading) return <p className="text-text-2 text-sm py-8 text-center">Memuat data masjid...</p>;
+  if (loading) return <SkeletonTablePage columns={5} hasFilterTabs hasButton />;
 
   return (
     <div>

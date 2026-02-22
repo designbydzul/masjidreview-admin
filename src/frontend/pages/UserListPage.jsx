@@ -12,6 +12,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
+import { SkeletonTablePage } from '../components/Skeleton';
 import { formatWA, formatDate } from '../utils/format';
 
 const emptyCreateForm = { name: '', wa_number: '', city: '', age_range: '' };
@@ -144,7 +145,7 @@ export default function UserListPage() {
     },
   ];
 
-  if (loading) return <p className="text-text-2 text-sm py-8 text-center">Memuat data user...</p>;
+  if (loading) return <SkeletonTablePage columns={7} hasButton />;
 
   return (
     <div>

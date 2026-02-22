@@ -19,6 +19,7 @@ import { Label } from '../components/ui/label';
 import { Select } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
+import { SkeletonTablePage } from '../components/Skeleton';
 import { formatDate } from '../utils/format';
 
 const emptyCreateForm = {
@@ -210,7 +211,7 @@ export default function ReviewListPage() {
     },
   ];
 
-  if (loading) return <p className="text-text-2 text-sm py-8 text-center">Memuat data review...</p>;
+  if (loading) return <SkeletonTablePage columns={6} hasFilterTabs hasButton />;
 
   return (
     <div>

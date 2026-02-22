@@ -8,6 +8,7 @@ import { Label } from '../components/ui/label';
 import { Select } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 import { Button } from '../components/ui/button';
+import { SkeletonFormPage } from '../components/Skeleton';
 
 export default function ReviewFormPage() {
   const { id } = useParams();
@@ -57,7 +58,7 @@ export default function ReviewFormPage() {
     }
   };
 
-  if (loading) return <p className="text-text-2 text-sm py-8 text-center">Memuat data...</p>;
+  if (loading) return <SkeletonFormPage />;
 
   return (
     <div>

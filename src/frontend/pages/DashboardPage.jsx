@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { getStats } from '../api';
 import StatCard from '../components/StatCard';
+import { SkeletonDashboard } from '../components/Skeleton';
 
 export default function DashboardPage() {
   const navigate = useNavigate();
@@ -15,9 +16,7 @@ export default function DashboardPage() {
       .finally(() => setLoading(false));
   }, []);
 
-  if (loading) {
-    return <p className="text-text-2 text-sm py-8 text-center">Memuat statistik...</p>;
-  }
+  if (loading) return <SkeletonDashboard />;
 
   return (
     <div>

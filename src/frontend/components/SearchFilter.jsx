@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { Search, X } from 'lucide-react';
+import { Select } from './ui/select';
 import { cn } from '../lib/utils';
 
 export default function SearchFilter({ searchPlaceholder = 'Cari...', filters = [], searchValue, onSearchChange, filterValues, onFilterChange }) {
@@ -30,20 +31,17 @@ export default function SearchFilter({ searchPlaceholder = 'Cari...', filters = 
 
       {/* Filter dropdowns */}
       {filters.map((f) => (
-        <select
+        <Select
           key={f.key}
           value={filterValues[f.key] || ''}
           onChange={(e) => onFilterChange(f.key, e.target.value)}
-          className={cn(
-            'h-9 rounded-sm border border-border bg-white px-3 py-2 text-sm transition-colors focus:outline-none focus:border-green sm:w-[160px]',
-            !filterValues[f.key] && 'text-text-3'
-          )}
+          className={cn('sm:w-[160px]', !filterValues[f.key] && 'text-text-3')}
         >
           <option value="">{f.allLabel || `Semua ${f.label}`}</option>
           {f.options.map((opt) => (
             <option key={opt.value} value={opt.value}>{opt.label}</option>
           ))}
-        </select>
+        </Select>
       ))}
     </div>
   );

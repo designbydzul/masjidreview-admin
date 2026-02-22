@@ -12,6 +12,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
+import { SkeletonDetailPage } from '../components/Skeleton';
 import { formatWA, formatDate, truncate } from '../utils/format';
 
 export default function UserDetailPage() {
@@ -85,7 +86,7 @@ export default function UserDetailPage() {
     },
   ];
 
-  if (loading) return <p className="text-text-2 text-sm py-8 text-center">Memuat data...</p>;
+  if (loading) return <SkeletonDetailPage />;
   if (!user) return <p className="text-text-2 text-sm py-8 text-center">User tidak ditemukan</p>;
 
   return (

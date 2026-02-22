@@ -14,6 +14,7 @@ import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { SkeletonTablePage } from '../components/Skeleton';
 import { formatWA, formatDate } from '../utils/format';
 
 export default function AdminListPage() {
@@ -134,7 +135,7 @@ export default function AdminListPage() {
     },
   ];
 
-  if (loading) return <p className="text-text-2 text-sm py-8 text-center">Memuat data admin...</p>;
+  if (loading) return <SkeletonTablePage columns={5} hasButton />;
 
   return (
     <div>
