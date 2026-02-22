@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { Building2, Plus } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Building2, Plus, ImageIcon } from 'lucide-react';
 import { getMasjids, setMasjidStatus, bulkMasjidStatus, deleteMasjid, getSimilarMasjids } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -10,6 +10,8 @@ import FilterTabs from '../components/FilterTabs';
 import BulkBar from '../components/BulkBar';
 import Badge from '../components/Badge';
 import SearchFilter, { useSearchFilter } from '../components/SearchFilter';
+import Pagination from '../components/Pagination';
+import usePagination from '../hooks/usePagination';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 
@@ -18,9 +20,13 @@ export default function MasjidListPage() {
   const { showToast } = useToast();
   const { confirm } = useConfirm();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [masjids, setMasjids] = useState([]);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState(() => {
+    const s = searchParams.get('status');
+    return s && ['approved', 'pending', 'rejected'].includes(s) ? s : 'all';
+  });
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [similarData, setSimilarData] = useState(null);
@@ -55,6 +61,11 @@ export default function MasjidListPage() {
     if (filterValues.city) result = result.filter((m) => m.city === filterValues.city);
     return result;
   }, [masjids, filter, debouncedSearch, filterValues]);
+
+  const { currentPage, totalItems, pageSize, paginatedData, goToPage } = usePagination(
+    filtered,
+    [filter, debouncedSearch, filterValues]
+  );
 
   const counts = {
     all: masjids.length,
@@ -111,6 +122,13 @@ export default function MasjidListPage() {
   };
 
   const columns = [
+    {
+      key: 'photo_url',
+      label: 'Foto',
+      render: (row) => row.photo_url
+        ? <img src={row.photo_url} alt={row.name} className="w-10 h-10 rounded object-cover" />
+        : <div className="w-10 h-10 rounded bg-bg-2 flex items-center justify-center"><ImageIcon className="h-4 w-4 text-text-3" /></div>,
+    },
     { key: 'name', label: 'Nama', render: (row) => <span className="font-medium">{row.name}</span> },
     { key: 'city', label: 'Kota' },
     { key: 'status', label: 'Status', render: (row) => <Badge status={row.status} /> },
@@ -177,12 +195,19 @@ export default function MasjidListPage() {
 
       <DataTable
         columns={columns}
-        data={filtered}
+        data={paginatedData}
         selectable
         selectedIds={selectedIds}
         onSelectionChange={setSelectedIds}
         emptyIcon={Building2}
         emptyText="Tidak ada masjid"
+      />
+
+      <Pagination
+        currentPage={currentPage}
+        totalItems={totalItems}
+        pageSize={pageSize}
+        onPageChange={(page) => { goToPage(page); setSelectedIds(new Set()); }}
       />
 
       {/* Similar masjid dialog */}

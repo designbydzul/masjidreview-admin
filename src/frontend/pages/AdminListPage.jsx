@@ -7,6 +7,8 @@ import { useConfirm } from '../contexts/ConfirmContext';
 import DataTable from '../components/DataTable';
 import Badge from '../components/Badge';
 import SearchFilter, { useSearchFilter } from '../components/SearchFilter';
+import Pagination from '../components/Pagination';
+import usePagination from '../hooks/usePagination';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -102,6 +104,11 @@ export default function AdminListPage() {
     return result;
   }, [admins, listDebouncedSearch, listFilterValues]);
 
+  const { currentPage, totalItems, pageSize, paginatedData, goToPage } = usePagination(
+    filteredAdmins,
+    [listDebouncedSearch, listFilterValues]
+  );
+
   const columns = [
     { key: 'name', label: 'Nama', render: (row) => <span className="font-medium">{row.name || '-'}</span> },
     { key: 'wa_number', label: 'WhatsApp', render: (row) => <span className="text-text-2">{formatWA(row.wa_number)}</span> },
@@ -150,7 +157,14 @@ export default function AdminListPage() {
         onFilterChange={handleListFilterChange}
       />
 
-      <DataTable columns={columns} data={filteredAdmins} emptyIcon={KeyRound} emptyText="Tidak ada admin" />
+      <DataTable columns={columns} data={paginatedData} emptyIcon={KeyRound} emptyText="Tidak ada admin" />
+
+      <Pagination
+        currentPage={currentPage}
+        totalItems={totalItems}
+        pageSize={pageSize}
+        onPageChange={goToPage}
+      />
 
       {/* Promote dialog */}
       <Dialog open={showPromote} onOpenChange={(open) => {

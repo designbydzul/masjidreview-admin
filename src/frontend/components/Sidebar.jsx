@@ -18,7 +18,7 @@ export default function Sidebar() {
   const items = navItems.filter((item) => !item.superOnly || admin?.role === 'super_admin');
 
   return (
-    <nav className="md:w-[220px] md:min-h-[calc(100vh-56px)] md:border-r md:border-border bg-white flex md:flex-col overflow-x-auto md:overflow-x-visible border-b md:border-b-0 border-border">
+    <nav className="md:w-[220px] md:sticky md:top-14 md:h-[calc(100vh-56px)] md:overflow-y-auto md:border-r md:border-border bg-white flex md:flex-col overflow-x-auto md:overflow-x-visible border-b md:border-b-0 border-border">
       <div className="flex md:flex-col md:py-3 md:px-2 gap-0.5 min-w-max md:min-w-0">
         {items.map((item) => {
           const Icon = item.icon;

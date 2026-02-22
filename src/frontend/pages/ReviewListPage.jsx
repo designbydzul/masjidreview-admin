@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Star, Plus } from 'lucide-react';
 import { getReviews, createReview, getMasjids, setReviewStatus, bulkReviewStatus, deleteReview } from '../api';
 import { useAuth } from '../contexts/AuthContext';
@@ -9,14 +9,17 @@ import DataTable from '../components/DataTable';
 import FilterTabs from '../components/FilterTabs';
 import BulkBar from '../components/BulkBar';
 import Badge from '../components/Badge';
+import ExpandableText from '../components/ExpandableText';
 import SearchFilter, { useSearchFilter } from '../components/SearchFilter';
+import Pagination from '../components/Pagination';
+import usePagination from '../hooks/usePagination';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Select } from '../components/ui/select';
 import { Textarea } from '../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
-import { truncate, formatDate } from '../utils/format';
+import { formatDate } from '../utils/format';
 
 const emptyCreateForm = {
   masjid_id: '',
@@ -35,9 +38,13 @@ export default function ReviewListPage() {
   const { showToast } = useToast();
   const { confirm } = useConfirm();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [reviews, setReviews] = useState([]);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState(() => {
+    const s = searchParams.get('status');
+    return s && ['approved', 'pending', 'rejected'].includes(s) ? s : 'all';
+  });
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const { search, debouncedSearch, filterValues, handleSearchChange, handleFilterChange } = useSearchFilter();
@@ -124,6 +131,11 @@ export default function ReviewListPage() {
     return result;
   }, [reviews, filter, debouncedSearch, filterValues]);
 
+  const { currentPage, totalItems, pageSize, paginatedData, goToPage } = usePagination(
+    filtered,
+    [filter, debouncedSearch, filterValues]
+  );
+
   const counts = {
     all: reviews.length,
     approved: reviews.filter((r) => r.status === 'approved').length,
@@ -169,7 +181,7 @@ export default function ReviewListPage() {
     { key: 'reviewer_name', label: 'Reviewer', render: (row) => <span className="font-medium">{row.reviewer_name || '-'}</span> },
     { key: 'masjid_name', label: 'Masjid', render: (row) => row.masjid_name || '-' },
     { key: 'rating', label: 'Rating', render: (row) => row.rating ? <span className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />{row.rating}</span> : '-' },
-    { key: 'short_description', label: 'Testimoni', render: (row) => <span className="text-text-2">{truncate(row.short_description)}</span> },
+    { key: 'short_description', label: 'Testimoni', render: (row) => <ExpandableText text={row.short_description} /> },
     { key: 'status', label: 'Status', render: (row) => <Badge status={row.status} /> },
     { key: 'created_at', label: 'Tanggal', render: (row) => <span className="text-text-3 text-xs">{formatDate(row.created_at)}</span> },
     {
@@ -240,12 +252,19 @@ export default function ReviewListPage() {
 
       <DataTable
         columns={columns}
-        data={filtered}
+        data={paginatedData}
         selectable
         selectedIds={selectedIds}
         onSelectionChange={setSelectedIds}
         emptyIcon={Star}
         emptyText="Tidak ada review"
+      />
+
+      <Pagination
+        currentPage={currentPage}
+        totalItems={totalItems}
+        pageSize={pageSize}
+        onPageChange={(page) => { goToPage(page); setSelectedIds(new Set()); }}
       />
 
       {/* Create review dialog */}

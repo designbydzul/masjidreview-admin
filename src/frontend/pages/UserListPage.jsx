@@ -5,6 +5,8 @@ import { getUsers, createUser } from '../api';
 import { useToast } from '../contexts/ToastContext';
 import DataTable from '../components/DataTable';
 import SearchFilter, { useSearchFilter } from '../components/SearchFilter';
+import Pagination from '../components/Pagination';
+import usePagination from '../hooks/usePagination';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -59,6 +61,11 @@ export default function UserListPage() {
     if (filterValues.city) result = result.filter((u) => u.city === filterValues.city);
     return result;
   }, [users, debouncedSearch, filterValues]);
+
+  const { currentPage, totalItems, pageSize, paginatedData, goToPage } = usePagination(
+    filteredUsers,
+    [debouncedSearch, filterValues]
+  );
 
   const handleOpenCreate = () => {
     setCreateForm(emptyCreateForm);
@@ -158,7 +165,14 @@ export default function UserListPage() {
         filterValues={filterValues}
         onFilterChange={handleFilterChange}
       />
-      <DataTable columns={columns} data={filteredUsers} emptyIcon={Users} emptyText="Tidak ada user" />
+      <DataTable columns={columns} data={paginatedData} emptyIcon={Users} emptyText="Tidak ada user" />
+
+      <Pagination
+        currentPage={currentPage}
+        totalItems={totalItems}
+        pageSize={pageSize}
+        onPageChange={goToPage}
+      />
 
       {/* Create user dialog */}
       <Dialog open={showCreate} onOpenChange={(open) => { if (!open) setShowCreate(false); }}>

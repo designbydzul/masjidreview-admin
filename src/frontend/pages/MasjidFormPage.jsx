@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { X, Plus } from 'lucide-react';
-import { getMasjid, createMasjid, updateMasjid, getFacilities } from '../api';
+import { getMasjid, getMasjids, createMasjid, updateMasjid, getFacilities } from '../api';
 import { useToast } from '../contexts/ToastContext';
 import FormCard from '../components/FormCard';
 import ToggleSwitch from '../components/ToggleSwitch';
@@ -33,6 +33,9 @@ export default function MasjidFormPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // City autocomplete
+  const [cityOptions, setCityOptions] = useState([]);
+
   // Dynamic facilities
   const [facilities, setFacilities] = useState([]);
   const [facilityValues, setFacilityValues] = useState({});
@@ -40,8 +43,10 @@ export default function MasjidFormPage() {
   useEffect(() => {
     const loadAll = async () => {
       try {
-        const facData = await getFacilities();
+        const [facData, allMasjids] = await Promise.all([getFacilities(), getMasjids()]);
         setFacilities(facData.filter((f) => f.is_active));
+        const cities = [...new Set(allMasjids.map((m) => m.city).filter(Boolean))].sort();
+        setCityOptions(cities);
 
         if (isEdit) {
           const data = await getMasjid(id);
@@ -183,7 +188,10 @@ export default function MasjidFormPage() {
             </div>
             <div>
               <Label>Kota *</Label>
-              <Input value={form.city} onChange={(e) => set('city', e.target.value)} />
+              <Input list="city-options" value={form.city} onChange={(e) => set('city', e.target.value)} />
+              <datalist id="city-options">
+                {cityOptions.map((c) => <option key={c} value={c} />)}
+              </datalist>
             </div>
           </div>
           <div className="mt-4">

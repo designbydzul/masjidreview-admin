@@ -1,8 +1,8 @@
 import { Card, CardContent } from './ui/card';
 
-export default function StatCard({ label, value, showBadge }) {
+export default function StatCard({ label, value, showBadge, onClick }) {
   return (
-    <Card>
+    <Card className={onClick ? 'cursor-pointer transition-shadow hover:shadow-md hover:border-green' : ''} onClick={onClick}>
       <CardContent className="p-5">
         <div className="text-text-2 text-xs font-semibold uppercase tracking-wider mb-2">{label}</div>
         <div className="flex items-center gap-2">
