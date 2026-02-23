@@ -17,6 +17,7 @@ export const authMe = () => apiFetch('/auth/me');
 export const requestOTP = (wa_number) => apiFetch('/auth/otp/request', { method: 'POST', body: JSON.stringify({ wa_number }) });
 export const verifyOTP = (wa_number, code) => apiFetch('/auth/otp/verify', { method: 'POST', body: JSON.stringify({ wa_number, code }) });
 export const logout = () => apiFetch('/auth/logout', { method: 'POST' });
+export const googleSignIn = (credential) => apiFetch('/auth/google', { method: 'POST', body: JSON.stringify({ credential }) });
 
 // Stats
 export const getStats = () => apiFetch('/api/stats');

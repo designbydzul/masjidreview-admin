@@ -2,6 +2,9 @@ name = "masjidreview-admin"
 main = "src/worker/index.js"
 compatibility_date = "2024-01-01"
 
+[vars]
+GOOGLE_CLIENT_ID = "682648630709-juloro49ulu1h0dh5od5ksf8koitl0bv.apps.googleusercontent.com"
+
 [ai]
 binding = "AI"
 

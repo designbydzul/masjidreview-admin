@@ -130,6 +130,7 @@ export default function UserListPage() {
   const columns = [
     { key: 'name', label: 'Nama', render: (row) => <span className="font-medium">{row.name || '-'}</span> },
     { key: 'wa_number', label: 'WhatsApp', render: (row) => <span className="text-text-2">{formatWA(row.wa_number)}</span> },
+    { key: 'email', label: 'Email', render: (row) => <span className="text-text-2 text-xs">{row.email || '-'}</span> },
     { key: 'city', label: 'Kota', render: (row) => row.city || '-' },
     { key: 'age_range', label: 'Usia', render: (row) => row.age_range || '-' },
     { key: 'review_count', label: 'Reviews', render: (row) => <span className="font-heading font-medium">{row.review_count || 0}</span> },
@@ -145,7 +146,7 @@ export default function UserListPage() {
     },
   ];
 
-  if (loading) return <SkeletonTablePage columns={7} hasButton />;
+  if (loading) return <SkeletonTablePage columns={8} hasButton />;
 
   return (
     <div>

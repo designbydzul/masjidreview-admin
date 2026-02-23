@@ -43,7 +43,7 @@ async function getSession(request, env) {
 // ── Cookie Helpers ──
 
 function sessionCookie(token) {
-  const maxAge = 7 * 24 * 60 * 60; // 7 days
+  const maxAge = 30 * 24 * 60 * 60; // 30 days
   return `admin_session=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
 }
 
@@ -345,36 +345,6 @@ async function handleFonnteWebhook(request, env, ctx) {
 
 let migrated = false;
 
-const FACILITY_SEEDS = [
-  { id: 'fac-ramadan-takjil', name: 'Takjil', grp: 'ramadhan', input_type: 'toggle', options: null, sort_order: 1 },
-  { id: 'fac-ramadan-makanan', name: 'Makanan Berat', grp: 'ramadhan', input_type: 'toggle', options: null, sort_order: 2 },
-  { id: 'fac-ramadan-ceramah', name: 'Ceramah Tarawih', grp: 'ramadhan', input_type: 'toggle', options: null, sort_order: 3 },
-  { id: 'fac-ramadan-mushaf', name: 'Mushaf Al-Quran', grp: 'ramadhan', input_type: 'toggle', options: null, sort_order: 4 },
-  { id: 'fac-ramadan-itikaf', name: "I'tikaf", grp: 'ramadhan', input_type: 'toggle', options: null, sort_order: 5 },
-  { id: 'fac-ramadan-rakaat', name: 'Rakaat Tarawih', grp: 'ramadhan', input_type: 'dropdown', options: '["11","23"]', sort_order: 6 },
-  { id: 'fac-ramadan-tempo', name: 'Tempo Shalat', grp: 'ramadhan', input_type: 'dropdown', options: '["khusyuk","sedang","cepat"]', sort_order: 7 },
-  { id: 'fac-masjid-parkir', name: 'Parkir Luas', grp: 'masjid', input_type: 'toggle', options: null, sort_order: 1 },
-  { id: 'fac-akhwat-wudhu', name: 'Wudhu Terpisah', grp: 'akhwat', input_type: 'toggle', options: null, sort_order: 1 },
-  { id: 'fac-akhwat-mukena', name: 'Mukena Tersedia', grp: 'akhwat', input_type: 'toggle', options: null, sort_order: 2 },
-  { id: 'fac-akhwat-ac', name: 'AC', grp: 'akhwat', input_type: 'toggle', options: null, sort_order: 3 },
-  { id: 'fac-akhwat-entrance', name: 'Pintu Masuk Aman', grp: 'akhwat', input_type: 'toggle', options: null, sort_order: 4 },
-];
-
-const OLD_COL_TO_FACILITY = {
-  ramadan_takjil: { id: 'fac-ramadan-takjil', type: 'toggle' },
-  ramadan_makanan_berat: { id: 'fac-ramadan-makanan', type: 'toggle' },
-  ramadan_ceramah_tarawih: { id: 'fac-ramadan-ceramah', type: 'toggle' },
-  ramadan_mushaf_alquran: { id: 'fac-ramadan-mushaf', type: 'toggle' },
-  ramadan_itikaf: { id: 'fac-ramadan-itikaf', type: 'toggle' },
-  ramadan_parkir: { id: 'fac-masjid-parkir', type: 'toggle' },
-  ramadan_rakaat: { id: 'fac-ramadan-rakaat', type: 'value' },
-  ramadan_tempo: { id: 'fac-ramadan-tempo', type: 'value' },
-  akhwat_wudhu_private: { id: 'fac-akhwat-wudhu', type: 'toggle' },
-  akhwat_mukena_available: { id: 'fac-akhwat-mukena', type: 'toggle' },
-  akhwat_ac_available: { id: 'fac-akhwat-ac', type: 'toggle' },
-  akhwat_safe_entrance: { id: 'fac-akhwat-entrance', type: 'toggle' },
-};
-
 async function runMigrations(env) {
   if (migrated) return;
 
@@ -385,71 +355,19 @@ async function runMigrations(env) {
   const latest = await env.DB.prepare('SELECT MAX(version) as v FROM _migrations').first();
   const currentVersion = latest?.v || 0;
 
-  if (currentVersion < 1) {
-    // Create facilities table
-    await env.DB.prepare(`
-      CREATE TABLE IF NOT EXISTS facilities (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        grp TEXT NOT NULL,
-        input_type TEXT NOT NULL,
-        options TEXT,
-        is_active INTEGER DEFAULT 1,
-        sort_order INTEGER DEFAULT 0,
-        created_at TEXT DEFAULT (datetime('now'))
-      )
-    `).run();
+  // v1: facilities + masjid_facilities tables, seed data, column migration (applied 2025-02-21)
 
-    // Create masjid_facilities table
-    await env.DB.prepare(`
-      CREATE TABLE IF NOT EXISTS masjid_facilities (
-        id TEXT PRIMARY KEY,
-        masjid_id TEXT NOT NULL,
-        facility_id TEXT NOT NULL,
-        value TEXT NOT NULL,
-        created_at TEXT DEFAULT (datetime('now')),
-        UNIQUE(masjid_id, facility_id)
-      )
-    `).run();
-
-    // Seed facility definitions
-    const seedStmts = FACILITY_SEEDS.map((f) =>
-      env.DB.prepare(
-        'INSERT OR IGNORE INTO facilities (id, name, grp, input_type, options, sort_order) VALUES (?, ?, ?, ?, ?, ?)'
-      ).bind(f.id, f.name, f.grp, f.input_type, f.options, f.sort_order)
-    );
-    await env.DB.batch(seedStmts);
-
-    // Migrate existing masjid data into masjid_facilities
-    const { results: masjids } = await env.DB.prepare('SELECT * FROM masjid').all();
-    for (const m of masjids) {
-      const batch = [];
-      for (const [col, mapping] of Object.entries(OLD_COL_TO_FACILITY)) {
-        const val = m[col];
-        if (val === null || val === undefined || val === '') continue;
-        if (mapping.type === 'toggle') {
-          if (val === 'ya' || val === 1 || val === '1') {
-            batch.push(
-              env.DB.prepare(
-                "INSERT OR IGNORE INTO masjid_facilities (id, masjid_id, facility_id, value) VALUES (?, ?, ?, 'ya')"
-              ).bind(crypto.randomUUID(), m.id, mapping.id)
-            );
-          }
-        } else {
-          batch.push(
-            env.DB.prepare(
-              'INSERT OR IGNORE INTO masjid_facilities (id, masjid_id, facility_id, value) VALUES (?, ?, ?, ?)'
-            ).bind(crypto.randomUUID(), m.id, mapping.id, String(val))
-          );
-        }
-      }
-      if (batch.length > 0) {
-        await env.DB.batch(batch);
-      }
-    }
-
-    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (1)').run();
+  // v2: Add google_id and email columns for Google Sign-in
+  if (currentVersion < 2) {
+    await env.DB.prepare('ALTER TABLE users ADD COLUMN google_id TEXT').run();
+    await env.DB.prepare('ALTER TABLE users ADD COLUMN email TEXT').run();
+    await env.DB.prepare(
+      'CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id) WHERE google_id IS NOT NULL'
+    ).run();
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (2)').run();
   }
+
+  // v3: Make wa_number nullable (applied 2026-02-23 via wrangler d1 execute with PRAGMA foreign_keys=OFF)
 
   migrated = true;
 }
@@ -461,8 +379,12 @@ export default {
     const { pathname } = new URL(request.url);
 
     try {
-      // Run database migrations
-      await runMigrations(env);
+      // Run database migrations (non-blocking — don't let migration errors kill routes)
+      try {
+        await runMigrations(env);
+      } catch (migrationErr) {
+        console.error('Migration failed:', migrationErr);
+      }
       // ── POST /webhook/fonnte (no auth required) ──
       if (pathname === '/webhook/fonnte' && request.method === 'POST') {
         return handleFonnteWebhook(request, env, ctx);
@@ -556,10 +478,10 @@ export default {
             return json({ error: 'Akun tidak memiliki akses admin' }, 403);
           }
 
-          // Create session in user_sessions (7-day expiry)
+          // Create session in user_sessions (30-day expiry)
           const token = generateToken();
           const sessionId = crypto.randomUUID();
-          const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
           const createdAt = new Date().toISOString();
 
           await env.DB.prepare(
@@ -600,6 +522,77 @@ export default {
             'Set-Cookie': clearCookie(),
           },
         });
+      }
+
+      // ── POST /auth/google ──
+      if (pathname === '/auth/google' && request.method === 'POST') {
+        try {
+          const body = await request.json();
+          const credential = body.credential;
+          if (!credential) return json({ error: 'Google credential required' }, 400);
+
+          // Verify token with Google
+          const verifyRes = await fetch(
+            `https://oauth2.googleapis.com/tokeninfo?id_token=${encodeURIComponent(credential)}`
+          );
+          if (!verifyRes.ok) return json({ error: 'Invalid Google token' }, 401);
+
+          const tokenInfo = await verifyRes.json();
+          if (tokenInfo.aud !== env.GOOGLE_CLIENT_ID) {
+            return json({ error: 'Invalid token audience' }, 401);
+          }
+
+          const google_id = tokenInfo.sub;
+          const email = tokenInfo.email;
+          const name = tokenInfo.name || email;
+
+          // Find or create user
+          let user = await env.DB.prepare(
+            'SELECT id, name, wa_number, role FROM users WHERE google_id = ?'
+          ).bind(google_id).first();
+
+          if (!user) {
+            const userId = crypto.randomUUID();
+            const createdAt = new Date().toISOString();
+            await env.DB.prepare(
+              "INSERT INTO users (id, google_id, email, name, role, created_at) VALUES (?, ?, ?, ?, 'user', ?)"
+            ).bind(userId, google_id, email, name, createdAt).run();
+            user = await env.DB.prepare(
+              'SELECT id, name, wa_number, role FROM users WHERE id = ?'
+            ).bind(userId).first();
+          }
+
+          // Admin role check
+          if (!user || !['admin', 'super_admin'].includes(user.role)) {
+            return json({ error: 'Akun kamu tidak memiliki akses admin' }, 403);
+          }
+
+          // Create session (30-day expiry)
+          const token = generateToken();
+          const sessionId = crypto.randomUUID();
+          const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+          const createdAt = new Date().toISOString();
+
+          await env.DB.prepare(
+            'INSERT INTO user_sessions (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)'
+          ).bind(sessionId, user.id, token, expiresAt, createdAt).run();
+
+          return new Response(
+            JSON.stringify({
+              ok: true,
+              admin: { id: user.id, name: user.name, wa_number: user.wa_number, role: user.role },
+            }),
+            {
+              status: 200,
+              headers: {
+                'Content-Type': 'application/json',
+                'Set-Cookie': sessionCookie(token),
+              },
+            }
+          );
+        } catch (e) {
+          return json({ error: 'Google sign-in failed' }, 500);
+        }
       }
 
       // ── GET /auth/me ──
