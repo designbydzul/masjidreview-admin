@@ -468,6 +468,24 @@ async function runMigrations(env) {
     await env.DB.prepare('INSERT INTO _migrations (version) VALUES (6)').run();
   }
 
+  // v7: Create facility_groups table for dynamic group management + column ordering
+  if (currentVersion < 7) {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS facility_groups (
+        grp TEXT PRIMARY KEY,
+        label TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0
+      )
+    `).run();
+
+    // Seed existing groups
+    await env.DB.prepare("INSERT OR IGNORE INTO facility_groups (grp, label, sort_order) VALUES ('ramadhan', 'Ramadhan', 0)").run();
+    await env.DB.prepare("INSERT OR IGNORE INTO facility_groups (grp, label, sort_order) VALUES ('masjid', 'Masjid', 1)").run();
+    await env.DB.prepare("INSERT OR IGNORE INTO facility_groups (grp, label, sort_order) VALUES ('akhwat', 'Akhwat', 2)").run();
+
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (7)').run();
+  }
+
   migrated = true;
 }
 
@@ -732,6 +750,61 @@ export default {
         return json(stats);
       }
 
+      // ── GET /api/facility-groups ──
+      if (pathname === '/api/facility-groups' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const { results } = await env.DB.prepare('SELECT * FROM facility_groups ORDER BY sort_order').all();
+        return json(results);
+      }
+
+      // ── POST /api/facility-groups ──
+      if (pathname === '/api/facility-groups' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const body = await request.json();
+        if (!body.label || !body.label.trim()) {
+          return json({ error: 'Nama grup wajib diisi' }, 400);
+        }
+        const grp = body.label.trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+        // Check if group already exists
+        const existing = await env.DB.prepare('SELECT grp FROM facility_groups WHERE grp = ?').bind(grp).first();
+        if (existing) return json({ error: 'Grup sudah ada' }, 409);
+        // Get max sort_order
+        const maxOrder = await env.DB.prepare('SELECT MAX(sort_order) as max_order FROM facility_groups').first();
+        const sort_order = (maxOrder?.max_order ?? -1) + 1;
+        await env.DB.prepare('INSERT INTO facility_groups (grp, label, sort_order) VALUES (?, ?, ?)').bind(grp, body.label.trim(), sort_order).run();
+        const created = await env.DB.prepare('SELECT * FROM facility_groups WHERE grp = ?').bind(grp).first();
+        return json(created, 201);
+      }
+
+      // ── PATCH /api/facility-groups/:grp ──
+      const facGroupMatch = pathname.match(/^\/api\/facility-groups\/([^/]+)$/);
+      if (facGroupMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const grp = decodeURIComponent(facGroupMatch[1]);
+        const body = await request.json();
+        if (body.sort_order === undefined) return json({ error: 'sort_order wajib diisi' }, 400);
+        await env.DB.prepare('UPDATE facility_groups SET sort_order = ? WHERE grp = ?').bind(body.sort_order, grp).run();
+        const updated = await env.DB.prepare('SELECT * FROM facility_groups WHERE grp = ?').bind(grp).first();
+        if (!updated) return json({ error: 'Group not found' }, 404);
+        return json(updated);
+      }
+
+      // ── DELETE /api/facility-groups/:grp ──
+      if (facGroupMatch && request.method === 'DELETE') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') return json({ error: 'Hanya super_admin yang dapat menghapus grup' }, 403);
+        const grp = decodeURIComponent(facGroupMatch[1]);
+        // Check if group has facilities
+        const count = await env.DB.prepare('SELECT COUNT(*) as cnt FROM facilities WHERE grp = ?').bind(grp).first();
+        if (count?.cnt > 0) return json({ error: 'Grup masih memiliki fasilitas. Hapus atau pindahkan fasilitas terlebih dahulu.' }, 400);
+        await env.DB.prepare('DELETE FROM facility_groups WHERE grp = ?').bind(grp).run();
+        return json({ ok: true });
+      }
+
       // ── PATCH /api/facilities/:id/toggle ──
       const facToggleMatch = pathname.match(/^\/api\/facilities\/([^/]+)\/toggle$/);
       if (facToggleMatch && request.method === 'PATCH') {
@@ -769,8 +842,10 @@ export default {
         if (!['toggle', 'dropdown', 'number'].includes(body.input_type)) {
           return json({ error: 'input_type harus toggle, dropdown, atau number' }, 400);
         }
-        if (!['ramadhan', 'masjid', 'akhwat'].includes(body.grp)) {
-          return json({ error: 'grp harus ramadhan, masjid, atau akhwat' }, 400);
+        // Validate grp exists in facility_groups table
+        const grpExists = await env.DB.prepare('SELECT grp FROM facility_groups WHERE grp = ?').bind(body.grp).first();
+        if (!grpExists) {
+          return json({ error: 'Grup tidak valid' }, 400);
         }
 
         const id = crypto.randomUUID();

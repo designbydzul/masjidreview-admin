@@ -61,6 +61,12 @@ export const changeUserRole = (id, role) => apiFetch('/api/users/' + id + '/role
 // Admins
 export const getAdmins = () => apiFetch('/api/admins');
 
+// Facility Groups
+export const getFacilityGroups = () => apiFetch('/api/facility-groups');
+export const createFacilityGroup = (data) => apiFetch('/api/facility-groups', { method: 'POST', body: JSON.stringify(data) });
+export const updateFacilityGroup = (grp, data) => apiFetch('/api/facility-groups/' + encodeURIComponent(grp), { method: 'PATCH', body: JSON.stringify(data) });
+export const deleteFacilityGroup = (grp) => apiFetch('/api/facility-groups/' + encodeURIComponent(grp), { method: 'DELETE' });
+
 // Facilities
 export const getFacilities = () => apiFetch('/api/facilities');
 export const createFacility = (data) => apiFetch('/api/facilities', { method: 'POST', body: JSON.stringify(data) });
