@@ -516,8 +516,8 @@ export default function FeedbackPage() {
     setSelectedItem(null);
   };
 
-  const openCreateDialog = (type = 'feedback') => {
-    setForm({ type, category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo' });
+  const openCreateDialog = () => {
+    setForm({ type: 'feedback', category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo' });
     setErrors({});
     setShowCreateDialog(true);
   };
@@ -569,13 +569,9 @@ export default function FeedbackPage() {
         <h1 className="font-heading font-bold text-xl text-text">Feedback & Backlog</h1>
         <div className="flex items-center gap-3">
           <span className="text-sm text-text-3">{items.length} total</span>
-          <Button variant="outline" onClick={() => openCreateDialog('idea')}>
+          <Button onClick={() => openCreateDialog()}>
             <Plus className="h-4 w-4 mr-1.5" />
-            Tambah Idea
-          </Button>
-          <Button onClick={() => openCreateDialog('feedback')}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Tambah Feedback
+            Tambah
           </Button>
         </div>
       </div>
@@ -620,7 +616,7 @@ export default function FeedbackPage() {
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent className="max-w-[540px]">
           <DialogHeader>
-            <DialogTitle>{form.type === 'idea' ? 'Tambah Idea' : 'Tambah Feedback'}</DialogTitle>
+            <DialogTitle>Tambah {form.type === 'idea' ? 'Idea' : 'Feedback'}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4">
