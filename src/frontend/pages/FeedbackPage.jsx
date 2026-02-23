@@ -564,8 +564,8 @@ export default function FeedbackPage() {
   }
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-4">
+    <div className="p-6 flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
+      <div className="flex items-center justify-between mb-4 flex-shrink-0">
         <h1 className="font-heading font-bold text-xl text-text">Feedback & Backlog</h1>
         <div className="flex items-center gap-3">
           <span className="text-sm text-text-3">{items.length} total</span>
@@ -576,7 +576,9 @@ export default function FeedbackPage() {
         </div>
       </div>
 
-      <FilterTabs tabs={typeTabs} activeTab={typeFilter} onTabChange={setTypeFilter} />
+      <div className="flex-shrink-0">
+        <FilterTabs tabs={typeTabs} activeTab={typeFilter} onTabChange={setTypeFilter} />
+      </div>
 
       <DndContext
         sensors={sensors}
@@ -584,7 +586,7 @@ export default function FeedbackPage() {
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: 'calc(100vh - 220px)' }}>
+        <div className="flex gap-4 overflow-x-auto flex-1 min-h-0 pb-2">
           {columns.map((col) => (
             <KanbanColumn
               key={col.id}
