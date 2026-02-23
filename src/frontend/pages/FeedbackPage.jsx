@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { MessageSquare } from 'lucide-react';
+import { MessageSquare, Plus } from 'lucide-react';
 import {
   DndContext,
   DragOverlay,
@@ -12,11 +12,13 @@ import {
 } from '@dnd-kit/core';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { getFeedback, updateFeedback } from '../api';
+import { getFeedback, createFeedback, updateFeedback } from '../api';
 import { Button } from '../components/ui/button';
 import { Label } from '../components/ui/label';
 import { Separator } from '../components/ui/separator';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
+import { Input } from '../components/ui/input';
+import { Textarea } from '../components/ui/textarea';
 import { formatDate, formatWA } from '../utils/format';
 import { cn } from '../lib/utils';
 
@@ -270,6 +272,12 @@ export default function FeedbackPage() {
   const [activeCard, setActiveCard] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
 
+  // Create dialog state
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [form, setForm] = useState({ category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo' });
+  const [errors, setErrors] = useState({});
+  const [saving, setSaving] = useState(false);
+
   const isSuperAdmin = admin?.role === 'super_admin';
 
   const sensors = useSensors(
@@ -335,6 +343,37 @@ export default function FeedbackPage() {
     setSelectedItem(updated);
   };
 
+  const openCreateDialog = () => {
+    setForm({ category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo' });
+    setErrors({});
+    setShowCreateDialog(true);
+  };
+
+  const handleCreate = async () => {
+    const errs = {};
+    if (!form.message.trim()) errs.message = 'Pesan wajib diisi';
+    if (Object.keys(errs).length > 0) { setErrors(errs); return; }
+
+    setSaving(true);
+    try {
+      await createFeedback({
+        category: form.category,
+        message: form.message.trim(),
+        name: form.name.trim() || null,
+        wa_number: form.wa_number.trim() || null,
+        priority: form.priority || null,
+        status: form.status,
+      });
+      showToast('Feedback ditambahkan');
+      setShowCreateDialog(false);
+      fetchItems();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="p-6">
@@ -354,7 +393,13 @@ export default function FeedbackPage() {
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
         <h1 className="font-heading font-bold text-xl text-text">Feedback</h1>
-        <span className="text-sm text-text-3">{items.length} total</span>
+        <div className="flex items-center gap-3">
+          <span className="text-sm text-text-3">{items.length} total</span>
+          <Button onClick={openCreateDialog}>
+            <Plus className="h-4 w-4 mr-1.5" />
+            Tambah Feedback
+          </Button>
+        </div>
       </div>
 
       <DndContext
@@ -390,6 +435,124 @@ export default function FeedbackPage() {
           onUpdate={handleItemUpdate}
         />
       )}
+
+      {/* ── Create Dialog ── */}
+      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
+        <DialogContent className="max-w-[540px]">
+          <DialogHeader>
+            <DialogTitle>Tambah Feedback</DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            {/* Category */}
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Kategori</Label>
+              <div className="flex gap-2">
+                {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, category: key }))}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
+                      form.category === key
+                        ? cfg.className
+                        : 'bg-white text-text-2 border-border hover:border-green'
+                    )}
+                  >
+                    {cfg.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Message */}
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Pesan *</Label>
+              <Textarea
+                value={form.message}
+                onChange={(e) => { setForm((f) => ({ ...f, message: e.target.value })); setErrors((e) => ({ ...e, message: undefined })); }}
+                placeholder="Tulis feedback..."
+                className="min-h-[150px]"
+              />
+              {errors.message && <p className="text-xs text-rose-600 mt-1">{errors.message}</p>}
+            </div>
+
+            {/* Name */}
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Nama (opsional)</Label>
+              <Input
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="Nama pengirim"
+              />
+            </div>
+
+            {/* WA Number */}
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">No. WhatsApp (opsional)</Label>
+              <Input
+                value={form.wa_number}
+                onChange={(e) => setForm((f) => ({ ...f, wa_number: e.target.value }))}
+                placeholder="08xxxxxxxxxx"
+              />
+            </div>
+
+            {/* Priority */}
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Prioritas (opsional)</Label>
+              <div className="flex gap-2">
+                {['low', 'medium', 'high'].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, priority: f.priority === p ? '' : p }))}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
+                      form.priority === p
+                        ? PRIORITY_ACTIVE[p]
+                        : 'bg-white text-text-2 border-border hover:border-green'
+                    )}
+                  >
+                    {PRIORITY_CONFIG[p].label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Status */}
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Status</Label>
+              <div className="flex flex-wrap gap-2">
+                {COLUMNS.map((col) => (
+                  <button
+                    key={col.id}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, status: col.id }))}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
+                      form.status === col.id
+                        ? 'bg-green-light text-green border-green'
+                        : 'bg-white text-text-2 border-border hover:border-green'
+                    )}
+                  >
+                    {col.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowCreateDialog(false)} disabled={saving}>
+              Batal
+            </Button>
+            <Button onClick={handleCreate} disabled={saving}>
+              {saving ? 'Menyimpan...' : 'Simpan'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

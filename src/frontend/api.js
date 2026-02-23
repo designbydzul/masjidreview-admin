@@ -85,4 +85,5 @@ export const toggleChangelogStatus = (id, status) => apiFetch('/api/changelog/' 
 
 // Feedback
 export const getFeedback = (status) => apiFetch('/api/feedback' + (status ? '?status=' + status : ''));
+export const createFeedback = (data) => apiFetch('/api/feedback', { method: 'POST', body: JSON.stringify(data) });
 export const updateFeedback = (id, data) => apiFetch('/api/feedback/' + id, { method: 'PATCH', body: JSON.stringify(data) });

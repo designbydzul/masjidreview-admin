@@ -1590,6 +1590,32 @@ export default {
         return json(results);
       }
 
+      // ── POST /api/feedback ──
+      if (pathname === '/api/feedback' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const body = await request.json();
+        const { category, message, name, wa_number, priority, status } = body;
+
+        if (!category || !message) return json({ error: 'Category dan message wajib diisi' }, 400);
+        if (!['bug', 'saran', 'umum'].includes(category)) return json({ error: 'Category tidak valid' }, 400);
+        if (priority && !['low', 'medium', 'high'].includes(priority)) return json({ error: 'Priority tidak valid' }, 400);
+
+        const feedbackStatus = status || 'todo';
+        if (!['todo', 'in_progress', 'hold', 'done', 'archived'].includes(feedbackStatus)) return json({ error: 'Status tidak valid' }, 400);
+
+        const id = crypto.randomUUID();
+        const createdAt = new Date().toISOString();
+
+        await env.DB.prepare(
+          'INSERT INTO feedback (id, category, message, name, wa_number, priority, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(id, category, message, name || null, wa_number || null, priority || null, feedbackStatus, createdAt).run();
+
+        const entry = await env.DB.prepare('SELECT * FROM feedback WHERE id = ?').bind(id).first();
+        return json(entry, 201);
+      }
+
       // ── PATCH /api/feedback/:id ──
       const feedbackIdMatch = pathname.match(/^\/api\/feedback\/([^/]+)$/);
       if (feedbackIdMatch && request.method === 'PATCH') {
