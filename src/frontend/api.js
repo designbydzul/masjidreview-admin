@@ -93,3 +93,4 @@ export const getFeedback = (params = {}) => {
 };
 export const createFeedback = (data) => apiFetch('/api/feedback', { method: 'POST', body: JSON.stringify(data) });
 export const updateFeedback = (id, data) => apiFetch('/api/feedback/' + id, { method: 'PATCH', body: JSON.stringify(data) });
+export const deleteFeedback = (id) => apiFetch('/api/feedback/' + id, { method: 'DELETE' });

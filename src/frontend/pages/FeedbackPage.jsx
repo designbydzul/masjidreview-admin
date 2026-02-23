@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Search } from 'lucide-react';
+import { Plus, Search, Trash2 } from 'lucide-react';
 import {
   DndContext,
   DragOverlay,
@@ -12,7 +12,8 @@ import {
 } from '@dnd-kit/core';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { getFeedback, createFeedback, updateFeedback } from '../api';
+import { getFeedback, createFeedback, updateFeedback, deleteFeedback } from '../api';
+import { useConfirm } from '../contexts/ConfirmContext';
 import { Button } from '../components/ui/button';
 import { Label } from '../components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
@@ -167,7 +168,7 @@ function KanbanColumn({ column, isSuperAdmin, onCardClick }) {
 
 // ── Detail Dialog (fully editable for super_admin) ──
 
-function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate }) {
+function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate, onDelete }) {
   const { showToast } = useToast();
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState({});
@@ -409,13 +410,19 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
         </div>
 
         {isSuperAdmin && (
-          <DialogFooter>
-            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-              Batal
+          <DialogFooter className="flex !justify-between">
+            <Button variant="destructive" size="sm" onClick={() => onDelete(item)} disabled={saving}>
+              <Trash2 className="h-4 w-4 mr-1.5" />
+              Hapus
             </Button>
-            <Button onClick={handleSave} disabled={saving}>
-              {saving ? 'Menyimpan...' : 'Simpan'}
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+                Batal
+              </Button>
+              <Button onClick={handleSave} disabled={saving}>
+                {saving ? 'Menyimpan...' : 'Simpan'}
+              </Button>
+            </div>
           </DialogFooter>
         )}
       </DialogContent>
@@ -428,6 +435,7 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
 export default function FeedbackPage() {
   const { admin } = useAuth();
   const { showToast } = useToast();
+  const confirm = useConfirm();
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -526,6 +534,24 @@ export default function FeedbackPage() {
     setSelectedItem(null);
   };
 
+  const handleDelete = async (item) => {
+    const ok = await confirm({
+      title: 'Hapus Feedback',
+      message: `Yakin ingin menghapus feedback dari "${item.name || 'Anonim'}"? Tindakan ini tidak dapat dibatalkan.`,
+      confirmLabel: 'Hapus',
+      confirmStyle: 'destructive',
+    });
+    if (!ok) return;
+    try {
+      await deleteFeedback(item.id);
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      setSelectedItem(null);
+      showToast('Feedback dihapus');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
   const openCreateDialog = () => {
     setForm({ type: 'feedback', category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo' });
     setErrors({});
@@ -576,7 +602,7 @@ export default function FeedbackPage() {
   return (
     <div className="p-6 flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
       <div className="flex items-center justify-between mb-4 flex-shrink-0">
-        <h1 className="font-heading font-bold text-xl text-text">Feedback & Backlog</h1>
+        <h1 className="font-heading font-bold text-xl text-text">Feedback Hub</h1>
         <Button onClick={() => openCreateDialog()}>
           <Plus className="h-4 w-4 mr-1.5" />
           Tambah
@@ -627,6 +653,7 @@ export default function FeedbackPage() {
           }}
           isSuperAdmin={isSuperAdmin}
           onUpdate={handleItemUpdate}
+          onDelete={handleDelete}
         />
       )}
 

@@ -1741,6 +1741,19 @@ export default {
         return json(updated);
       }
 
+      if (feedbackIdMatch && request.method === 'DELETE') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') return json({ error: 'Hanya super_admin yang dapat menghapus feedback' }, 403);
+
+        const feedbackId = feedbackIdMatch[1];
+        const existing = await env.DB.prepare('SELECT * FROM feedback WHERE id = ?').bind(feedbackId).first();
+        if (!existing) return json({ error: 'Feedback tidak ditemukan' }, 404);
+
+        await env.DB.prepare('DELETE FROM feedback WHERE id = ?').bind(feedbackId).run();
+        return json({ ok: true });
+      }
+
       // ── Serve HTML for all other routes ──
       return new Response(HTML, {
         headers: { ...SECURITY_HEADERS, 'Content-Type': 'text/html;charset=UTF-8' },
