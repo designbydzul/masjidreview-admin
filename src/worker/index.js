@@ -415,6 +415,24 @@ async function runMigrations(env) {
     await env.DB.prepare('INSERT INTO _migrations (version) VALUES (4)').run();
   }
 
+  // v5: Create feedback table
+  if (currentVersion < 5) {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS feedback (
+        id TEXT PRIMARY KEY,
+        category TEXT NOT NULL,
+        message TEXT NOT NULL,
+        name TEXT,
+        wa_number TEXT,
+        user_id TEXT REFERENCES users(id),
+        priority TEXT,
+        status TEXT NOT NULL DEFAULT 'todo',
+        created_at TEXT NOT NULL
+      )
+    `).run();
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (5)').run();
+  }
+
   migrated = true;
 }
 
@@ -1544,6 +1562,75 @@ export default {
         ).bind(status, publishedAt, entryId).run();
 
         const updated = await env.DB.prepare('SELECT * FROM changelog WHERE id = ?').bind(entryId).first();
+        return json(updated);
+      }
+
+      // ── GET /api/feedback ──
+      if (pathname === '/api/feedback' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const url = new URL(request.url);
+        const status = url.searchParams.get('status');
+
+        let sql = 'SELECT * FROM feedback';
+        const params = [];
+
+        if (status && ['todo', 'in_progress', 'hold', 'done', 'archived'].includes(status)) {
+          sql += ' WHERE status = ?';
+          params.push(status);
+        }
+
+        sql += ' ORDER BY created_at DESC';
+
+        const stmt = params.length > 0
+          ? env.DB.prepare(sql).bind(...params)
+          : env.DB.prepare(sql);
+        const { results } = await stmt.all();
+        return json(results);
+      }
+
+      // ── PATCH /api/feedback/:id ──
+      const feedbackIdMatch = pathname.match(/^\/api\/feedback\/([^/]+)$/);
+      if (feedbackIdMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') return json({ error: 'Hanya super_admin yang dapat mengubah feedback' }, 403);
+
+        const feedbackId = feedbackIdMatch[1];
+        const existing = await env.DB.prepare('SELECT * FROM feedback WHERE id = ?').bind(feedbackId).first();
+        if (!existing) return json({ error: 'Feedback tidak ditemukan' }, 404);
+
+        const body = await request.json();
+        const setClauses = [];
+        const vals = [];
+
+        if (body.status !== undefined) {
+          if (!['todo', 'in_progress', 'hold', 'done', 'archived'].includes(body.status)) {
+            return json({ error: 'Status tidak valid' }, 400);
+          }
+          setClauses.push('status = ?');
+          vals.push(body.status);
+        }
+
+        if (body.priority !== undefined) {
+          if (body.priority !== null && !['low', 'medium', 'high'].includes(body.priority)) {
+            return json({ error: 'Priority tidak valid' }, 400);
+          }
+          setClauses.push('priority = ?');
+          vals.push(body.priority);
+        }
+
+        if (setClauses.length === 0) {
+          return json({ error: 'Tidak ada data untuk diperbarui' }, 400);
+        }
+
+        vals.push(feedbackId);
+        await env.DB.prepare(
+          'UPDATE feedback SET ' + setClauses.join(', ') + ' WHERE id = ?'
+        ).bind(...vals).run();
+
+        const updated = await env.DB.prepare('SELECT * FROM feedback WHERE id = ?').bind(feedbackId).first();
         return json(updated);
       }
 

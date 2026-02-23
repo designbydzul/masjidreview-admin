@@ -16,6 +16,7 @@ import UserDetailPage from './pages/UserDetailPage';
 import AdminListPage from './pages/AdminListPage';
 import SettingsPage from './pages/SettingsPage';
 import ChangelogPage from './pages/ChangelogPage';
+import FeedbackPage from './pages/FeedbackPage';
 
 export default function App() {
   return (
@@ -43,6 +44,7 @@ export default function App() {
                 <Route path="users/:id" element={<UserDetailPage />} />
                 <Route path="admins" element={<AdminListPage />} />
                 <Route path="settings" element={<SettingsPage />} />
+                <Route path="feedback" element={<FeedbackPage />} />
                 <Route path="changelog" element={<ChangelogPage />} />
               </Route>
             </Routes>

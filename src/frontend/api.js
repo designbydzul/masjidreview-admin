@@ -82,3 +82,7 @@ export const createChangelog = (data) => apiFetch('/api/changelog', { method: 'P
 export const updateChangelog = (id, data) => apiFetch('/api/changelog/' + id, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteChangelog = (id) => apiFetch('/api/changelog/' + id, { method: 'DELETE' });
 export const toggleChangelogStatus = (id, status) => apiFetch('/api/changelog/' + id + '/status', { method: 'PATCH', body: JSON.stringify({ status }) });
+
+// Feedback
+export const getFeedback = (status) => apiFetch('/api/feedback' + (status ? '?status=' + status : ''));
+export const updateFeedback = (id, data) => apiFetch('/api/feedback/' + id, { method: 'PATCH', body: JSON.stringify(data) });
