@@ -9,7 +9,7 @@ const navItems = [
   { to: '/reviews', label: 'Reviews', icon: Star },
   { to: '/users', label: 'Users', icon: Users },
   { to: '/admins', label: 'Admin', icon: KeyRound, superOnly: true },
-  { to: '/settings', label: 'Pengaturan', icon: Settings },
+  { to: '/fasilitas', label: 'Fasilitas', icon: Settings },
   { to: '/feedback', label: 'Feedback Hub', icon: MessageSquare },
   { to: '/changelog', label: 'Changelog', icon: ScrollText },
 ];

@@ -116,66 +116,62 @@ export default function SettingsPage() {
   if (loading) return <p className="text-text-2 text-sm py-8 text-center">Memuat data...</p>;
 
   return (
-    <div>
-      <h1 className="font-heading text-[22px] font-bold text-text mb-5">Pengaturan</h1>
+    <div className="p-6">
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="font-heading font-bold text-xl text-text">Fasilitas</h1>
+        <Button onClick={openAddDialog}>
+          <Plus className="h-4 w-4 mr-1.5" />
+          Tambah Fasilitas
+        </Button>
+      </div>
 
-      <div className="bg-white border border-border rounded-card p-5">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="font-heading font-bold text-base text-text">Kelola Fasilitas</h2>
-          <Button size="sm" onClick={openAddDialog} className="font-semibold">
-            <Plus className="h-4 w-4 mr-1" />
-            Tambah Fasilitas
-          </Button>
-        </div>
+      <div className="flex gap-2 mb-4">
+        {GROUPS.map((grp) => (
+          <button
+            key={grp}
+            onClick={() => setActiveGroup(grp)}
+            className={cn(
+              'px-3.5 py-2 text-sm font-medium rounded-full border transition-colors',
+              activeGroup === grp
+                ? 'bg-green text-white border-green'
+                : 'bg-white text-text-2 border-border hover:border-green hover:text-green'
+            )}
+          >
+            {GROUP_LABELS[grp]}
+          </button>
+        ))}
+      </div>
 
-        <div className="flex gap-2 mb-4">
-          {GROUPS.map((grp) => (
-            <button
-              key={grp}
-              onClick={() => setActiveGroup(grp)}
-              className={cn(
-                'px-3.5 py-2 text-sm font-medium rounded-full border transition-colors',
-                activeGroup === grp
-                  ? 'bg-green text-white border-green'
-                  : 'bg-white text-text-2 border-border hover:border-green hover:text-green'
-              )}
-            >
-              {GROUP_LABELS[grp]}
-            </button>
-          ))}
-        </div>
-
-        {filtered.length === 0 ? (
-          <p className="text-text-3 text-sm text-center py-8">Belum ada fasilitas di grup ini</p>
-        ) : (
-          <div className="space-y-2">
-            {filtered.map((fac) => (
-              <div key={fac.id} className="flex items-center justify-between p-3 bg-bg border border-border rounded-sm">
-                <div className="flex items-center gap-3">
-                  <ToggleSwitch checked={!!fac.is_active} onChange={() => handleToggleActive(fac.id)} />
-                  <div className="flex items-center gap-2">
-                    <span className={cn('text-sm font-medium', fac.is_active ? 'text-text' : 'text-text-3 line-through')}>{fac.name}</span>
-                    <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200">
-                      {TYPE_LABELS[fac.input_type]}
-                    </span>
-                  </div>
-                </div>
+      {filtered.length === 0 ? (
+        <p className="text-text-3 text-sm text-center py-8">Belum ada fasilitas di grup ini</p>
+      ) : (
+        <div className="space-y-2">
+          {filtered.map((fac) => (
+            <div key={fac.id} className="flex items-center justify-between p-3 bg-white border border-border rounded-sm">
+              <div className="flex items-center gap-3">
+                <ToggleSwitch checked={!!fac.is_active} onChange={() => handleToggleActive(fac.id)} />
                 <div className="flex items-center gap-2">
-                  <span className="text-xs text-text-3 mr-1">#{fac.sort_order}</span>
-                  <Button variant="outline" size="sm" onClick={() => openEditDialog(fac)}>
-                    <Pencil className="h-3.5 w-3.5" />
-                  </Button>
-                  {admin?.role === 'super_admin' && (
-                    <Button variant="outline" size="sm" onClick={() => handleDelete(fac)} className="text-red hover:border-red">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
+                  <span className={cn('text-sm font-medium', fac.is_active ? 'text-text' : 'text-text-3 line-through')}>{fac.name}</span>
+                  <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-gray-100 text-gray-500 border border-gray-200">
+                    {TYPE_LABELS[fac.input_type]}
+                  </span>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-text-3 mr-1">#{fac.sort_order}</span>
+                <Button variant="outline" size="sm" onClick={() => openEditDialog(fac)}>
+                  <Pencil className="h-3.5 w-3.5" />
+                </Button>
+                {admin?.role === 'super_admin' && (
+                  <Button variant="outline" size="sm" onClick={() => handleDelete(fac)} className="text-red hover:border-red">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Add/Edit Facility Dialog */}
       <Dialog open={showDialog} onOpenChange={(open) => { if (!open) setShowDialog(false); }}>

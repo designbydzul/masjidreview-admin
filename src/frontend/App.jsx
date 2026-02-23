@@ -43,7 +43,7 @@ export default function App() {
                 <Route path="users" element={<UserListPage />} />
                 <Route path="users/:id" element={<UserDetailPage />} />
                 <Route path="admins" element={<AdminListPage />} />
-                <Route path="settings" element={<SettingsPage />} />
+                <Route path="fasilitas" element={<SettingsPage />} />
                 <Route path="feedback" element={<FeedbackPage />} />
                 <Route path="changelog" element={<ChangelogPage />} />
               </Route>
