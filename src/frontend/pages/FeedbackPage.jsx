@@ -19,7 +19,6 @@ import { Label } from '../components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
-import FilterTabs from '../components/FilterTabs';
 import { formatDate, formatWA } from '../utils/format';
 import { cn } from '../lib/utils';
 
@@ -609,8 +608,32 @@ export default function FeedbackPage() {
         </Button>
       </div>
 
-      <div className="flex items-center justify-between flex-shrink-0">
-        <FilterTabs tabs={typeTabs} activeTab={typeFilter} onTabChange={setTypeFilter} />
+      <div className="flex items-center justify-between flex-shrink-0 mb-4">
+        <div className="flex gap-2">
+          {typeTabs.map((tab) => {
+            const isActive = tab.key === typeFilter;
+            return (
+              <button
+                key={tab.key}
+                onClick={() => setTypeFilter(tab.key)}
+                className={cn(
+                  'flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-full border whitespace-nowrap transition-colors',
+                  isActive
+                    ? 'bg-green text-white border-green'
+                    : 'bg-white text-text-2 border-border hover:border-green hover:text-green'
+                )}
+              >
+                {tab.label}
+                <span className={cn(
+                  'text-[11px] font-bold px-1.5 py-0 rounded-full',
+                  isActive ? 'bg-white/25 text-white' : 'bg-border-2 text-text-3'
+                )}>
+                  {tab.count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
         <div className="relative flex-shrink-0">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-3" />
           <Input
