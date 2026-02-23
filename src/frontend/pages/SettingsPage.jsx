@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import { useBlocker } from 'react-router-dom';
 import {
   DndContext,
   DragOverlay,
@@ -276,24 +275,6 @@ export default function SettingsPage() {
     return () => window.removeEventListener('beforeunload', handler);
   }, [hasChanges]);
 
-  // ── Navigation Guard: React Router ──
-  const blocker = useBlocker(({ currentLocation, nextLocation }) =>
-    hasChanges && currentLocation.pathname !== nextLocation.pathname
-  );
-
-  useEffect(() => {
-    if (blocker.state === 'blocked') {
-      confirm({
-        title: 'Perubahan Belum Disimpan',
-        message: 'Ada perubahan yang belum disimpan. Yakin ingin keluar?',
-        confirmLabel: 'Keluar',
-        confirmStyle: 'red',
-      }).then((ok) => {
-        if (ok) blocker.proceed();
-        else blocker.reset();
-      });
-    }
-  }, [blocker.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Load Data ──
   const loadData = useCallback(() => {
