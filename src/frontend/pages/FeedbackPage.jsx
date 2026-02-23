@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus } from 'lucide-react';
+import { Plus, Search } from 'lucide-react';
 import {
   DndContext,
   DragOverlay,
@@ -434,6 +434,7 @@ export default function FeedbackPage() {
   const [activeCard, setActiveCard] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
   const [typeFilter, setTypeFilter] = useState('all');
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Create dialog state
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -466,9 +467,18 @@ export default function FeedbackPage() {
   ], [items]);
 
   const columns = useMemo(() => {
-    const filtered = typeFilter === 'all'
+    let filtered = typeFilter === 'all'
       ? items
       : items.filter((item) => (item.type || 'feedback') === typeFilter);
+
+    if (searchQuery.trim()) {
+      const q = searchQuery.trim().toLowerCase();
+      filtered = filtered.filter((item) =>
+        item.message?.toLowerCase().includes(q) ||
+        item.name?.toLowerCase().includes(q) ||
+        item.category?.toLowerCase().includes(q)
+      );
+    }
 
     return COLUMNS.map((col) => ({
       ...col,
@@ -476,7 +486,7 @@ export default function FeedbackPage() {
         .filter((item) => item.status === col.id)
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
     }));
-  }, [items, typeFilter]);
+  }, [items, typeFilter, searchQuery]);
 
   const handleDragStart = (event) => {
     const item = items.find((i) => i.id === event.active.id);
@@ -568,7 +578,15 @@ export default function FeedbackPage() {
       <div className="flex items-center justify-between mb-4 flex-shrink-0">
         <h1 className="font-heading font-bold text-xl text-text">Feedback & Backlog</h1>
         <div className="flex items-center gap-3">
-          <span className="text-sm text-text-3">{items.length} total</span>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-3" />
+            <Input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Cari feedback..."
+              className="pl-9 w-[220px] h-9"
+            />
+          </div>
           <Button onClick={() => openCreateDialog()}>
             <Plus className="h-4 w-4 mr-1.5" />
             Tambah
