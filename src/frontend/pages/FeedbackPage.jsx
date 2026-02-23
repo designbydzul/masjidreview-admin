@@ -577,25 +577,23 @@ export default function FeedbackPage() {
     <div className="p-6 flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
       <div className="flex items-center justify-between mb-4 flex-shrink-0">
         <h1 className="font-heading font-bold text-xl text-text">Feedback & Backlog</h1>
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-3" />
-            <Input
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Cari feedback..."
-              className="pl-9 w-[220px] h-9"
-            />
-          </div>
-          <Button onClick={() => openCreateDialog()}>
-            <Plus className="h-4 w-4 mr-1.5" />
-            Tambah
-          </Button>
-        </div>
+        <Button onClick={() => openCreateDialog()}>
+          <Plus className="h-4 w-4 mr-1.5" />
+          Tambah
+        </Button>
       </div>
 
-      <div className="flex-shrink-0">
+      <div className="flex items-center justify-between flex-shrink-0">
         <FilterTabs tabs={typeTabs} activeTab={typeFilter} onTabChange={setTypeFilter} />
+        <div className="relative flex-shrink-0">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-3" />
+          <Input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Cari feedback..."
+            className="pl-9 w-[220px] h-9"
+          />
+        </div>
       </div>
 
       <DndContext
