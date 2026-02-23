@@ -398,6 +398,23 @@ async function runMigrations(env) {
 
   // v3: Make wa_number nullable (applied 2026-02-23 via wrangler d1 execute with PRAGMA foreign_keys=OFF)
 
+  // v4: Create changelog table
+  if (currentVersion < 4) {
+    await env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS changelog (
+        id TEXT PRIMARY KEY,
+        version TEXT NOT NULL,
+        title TEXT NOT NULL,
+        details TEXT,
+        categories TEXT DEFAULT '[]',
+        status TEXT DEFAULT 'draft',
+        created_at TEXT DEFAULT (datetime('now')),
+        published_at TEXT
+      )
+    `).run();
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (4)').run();
+  }
+
   migrated = true;
 }
 
@@ -1397,6 +1414,137 @@ export default {
           "SELECT id, name, wa_number, role, created_at FROM users WHERE role IN ('admin', 'super_admin') ORDER BY created_at ASC"
         ).all();
         return json(results);
+      }
+
+      // ── GET /api/changelog ──
+      if (pathname === '/api/changelog' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const url = new URL(request.url);
+        const status = url.searchParams.get('status');
+
+        let sql = 'SELECT * FROM changelog';
+        const params = [];
+
+        if (status && ['draft', 'published'].includes(status)) {
+          sql += ' WHERE status = ?';
+          params.push(status);
+        }
+
+        sql += ' ORDER BY created_at DESC';
+
+        const stmt = params.length > 0
+          ? env.DB.prepare(sql).bind(...params)
+          : env.DB.prepare(sql);
+        const { results } = await stmt.all();
+        return json(results);
+      }
+
+      // ── POST /api/changelog ──
+      if (pathname === '/api/changelog' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const body = await request.json();
+        const { version, title, details, categories } = body;
+
+        if (!version || !title) {
+          return json({ error: 'Version dan title wajib diisi' }, 400);
+        }
+
+        let cats = '[]';
+        if (categories) {
+          if (!Array.isArray(categories)) return json({ error: 'Categories harus berupa array' }, 400);
+          const validCats = ['public_app', 'admin', 'worker', 'database', 'deployment', 'docs'];
+          const invalid = categories.filter(c => !validCats.includes(c));
+          if (invalid.length > 0) return json({ error: 'Kategori tidak valid: ' + invalid.join(', ') }, 400);
+          cats = JSON.stringify(categories);
+        }
+
+        const id = crypto.randomUUID();
+        const createdAt = new Date().toISOString();
+
+        await env.DB.prepare(
+          'INSERT INTO changelog (id, version, title, details, categories, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).bind(id, version, title, details || null, cats, 'draft', createdAt).run();
+
+        const entry = await env.DB.prepare('SELECT * FROM changelog WHERE id = ?').bind(id).first();
+        return json(entry, 201);
+      }
+
+      // ── PUT/DELETE /api/changelog/:id ──
+      const changelogMatch = pathname.match(/^\/api\/changelog\/([^/]+)$/);
+      if (changelogMatch && request.method === 'PUT') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const entryId = changelogMatch[1];
+        const existing = await env.DB.prepare('SELECT * FROM changelog WHERE id = ?').bind(entryId).first();
+        if (!existing) return json({ error: 'Entry tidak ditemukan' }, 404);
+
+        const body = await request.json();
+        const { version, title, details, categories } = body;
+
+        if (!version || !title) {
+          return json({ error: 'Version dan title wajib diisi' }, 400);
+        }
+
+        let cats = existing.categories;
+        if (categories !== undefined) {
+          if (!Array.isArray(categories)) return json({ error: 'Categories harus berupa array' }, 400);
+          const validCats = ['public_app', 'admin', 'worker', 'database', 'deployment', 'docs'];
+          const invalid = categories.filter(c => !validCats.includes(c));
+          if (invalid.length > 0) return json({ error: 'Kategori tidak valid: ' + invalid.join(', ') }, 400);
+          cats = JSON.stringify(categories);
+        }
+
+        await env.DB.prepare(
+          'UPDATE changelog SET version = ?, title = ?, details = ?, categories = ? WHERE id = ?'
+        ).bind(version, title, details || null, cats, entryId).run();
+
+        const updated = await env.DB.prepare('SELECT * FROM changelog WHERE id = ?').bind(entryId).first();
+        return json(updated);
+      }
+
+      if (changelogMatch && request.method === 'DELETE') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') return json({ error: 'Hanya super_admin yang dapat menghapus changelog' }, 403);
+
+        const entryId = changelogMatch[1];
+        const existing = await env.DB.prepare('SELECT * FROM changelog WHERE id = ?').bind(entryId).first();
+        if (!existing) return json({ error: 'Entry tidak ditemukan' }, 404);
+
+        await env.DB.prepare('DELETE FROM changelog WHERE id = ?').bind(entryId).run();
+        return json({ ok: true });
+      }
+
+      // ── PATCH /api/changelog/:id/status ──
+      const changelogStatusMatch = pathname.match(/^\/api\/changelog\/([^/]+)\/status$/);
+      if (changelogStatusMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const entryId = changelogStatusMatch[1];
+        const existing = await env.DB.prepare('SELECT * FROM changelog WHERE id = ?').bind(entryId).first();
+        if (!existing) return json({ error: 'Entry tidak ditemukan' }, 404);
+
+        const body = await request.json();
+        const { status } = body;
+
+        if (!status || !['draft', 'published'].includes(status)) {
+          return json({ error: 'Status harus draft atau published' }, 400);
+        }
+
+        const publishedAt = status === 'published' ? new Date().toISOString() : null;
+
+        await env.DB.prepare(
+          'UPDATE changelog SET status = ?, published_at = ? WHERE id = ?'
+        ).bind(status, publishedAt, entryId).run();
+
+        const updated = await env.DB.prepare('SELECT * FROM changelog WHERE id = ?').bind(entryId).first();
+        return json(updated);
       }
 
       // ── Serve HTML for all other routes ──

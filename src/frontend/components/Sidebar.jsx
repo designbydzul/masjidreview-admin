@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Building2, Star, Users, KeyRound, Settings } from 'lucide-react';
+import { LayoutDashboard, Building2, Star, Users, KeyRound, Settings, ScrollText } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
 
@@ -10,6 +10,7 @@ const navItems = [
   { to: '/users', label: 'Users', icon: Users },
   { to: '/admins', label: 'Admin', icon: KeyRound, superOnly: true },
   { to: '/settings', label: 'Pengaturan', icon: Settings },
+  { to: '/changelog', label: 'Changelog', icon: ScrollText },
 ];
 
 export default function Sidebar() {

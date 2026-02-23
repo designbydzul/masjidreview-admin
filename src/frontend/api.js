@@ -75,3 +75,10 @@ export const getFacilitySuggestions = (params = {}) => {
 };
 export const actionFacilitySuggestion = (id, action) =>
   apiFetch('/api/facility-suggestions/' + id, { method: 'PATCH', body: JSON.stringify({ action }) });
+
+// Changelog
+export const getChangelogs = (status) => apiFetch('/api/changelog' + (status ? '?status=' + status : ''));
+export const createChangelog = (data) => apiFetch('/api/changelog', { method: 'POST', body: JSON.stringify(data) });
+export const updateChangelog = (id, data) => apiFetch('/api/changelog/' + id, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteChangelog = (id) => apiFetch('/api/changelog/' + id, { method: 'DELETE' });
+export const toggleChangelogStatus = (id, status) => apiFetch('/api/changelog/' + id + '/status', { method: 'PATCH', body: JSON.stringify({ status }) });
