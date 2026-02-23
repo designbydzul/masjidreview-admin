@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { MessageSquare, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import {
   DndContext,
   DragOverlay,
@@ -15,10 +15,10 @@ import { useToast } from '../contexts/ToastContext';
 import { getFeedback, createFeedback, updateFeedback } from '../api';
 import { Button } from '../components/ui/button';
 import { Label } from '../components/ui/label';
-import { Separator } from '../components/ui/separator';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
+import FilterTabs from '../components/FilterTabs';
 import { formatDate, formatWA } from '../utils/format';
 import { cn } from '../lib/utils';
 
@@ -50,7 +50,26 @@ const PRIORITY_ACTIVE = {
   high: 'bg-rose-50 text-rose-700 border-rose-300',
 };
 
+const TYPE_CONFIG = {
+  feedback: { label: 'Feedback', className: 'bg-blue-50 text-blue-700 border-blue-200' },
+  idea: { label: 'Idea', className: 'bg-purple-50 text-purple-700 border-purple-200' },
+};
+
+const TYPE_ACTIVE = {
+  feedback: 'bg-blue-50 text-blue-700 border-blue-300',
+  idea: 'bg-purple-50 text-purple-700 border-purple-300',
+};
+
 // ── Inline Badge Helpers ──
+
+function TypeBadge({ type }) {
+  const config = TYPE_CONFIG[type] || TYPE_CONFIG.feedback;
+  return (
+    <span className={cn('inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full border', config.className)}>
+      {config.label}
+    </span>
+  );
+}
 
 function CategoryBadge({ category }) {
   const config = CATEGORY_CONFIG[category] || CATEGORY_CONFIG.umum;
@@ -97,6 +116,7 @@ function FeedbackCard({ item, isDraggable = false, isDragOverlay = false, onClic
       )}
     >
       <div className="flex items-center gap-1.5 mb-2 flex-wrap">
+        <TypeBadge type={item.type || 'feedback'} />
         <CategoryBadge category={item.category} />
         {item.priority && <PriorityBadge priority={item.priority} />}
       </div>
@@ -145,31 +165,57 @@ function KanbanColumn({ column, isSuperAdmin, onCardClick }) {
   );
 }
 
-// ── Detail Dialog ──
+// ── Detail Dialog (fully editable for super_admin) ──
 
 function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate }) {
   const { showToast } = useToast();
   const [saving, setSaving] = useState(false);
+  const [editForm, setEditForm] = useState({});
 
-  const handleStatusChange = async (newStatus) => {
-    setSaving(true);
-    try {
-      const updated = await updateFeedback(item.id, { status: newStatus });
-      onUpdate(updated);
-      showToast('Status diperbarui');
-    } catch (err) {
-      showToast(err.message, 'error');
-    } finally {
-      setSaving(false);
+  useEffect(() => {
+    if (item) {
+      setEditForm({
+        type: item.type || 'feedback',
+        category: item.category,
+        message: item.message,
+        name: item.name || '',
+        wa_number: item.wa_number || '',
+        priority: item.priority || '',
+        status: item.status,
+      });
     }
+  }, [item]);
+
+  const updateField = (field, value) => {
+    setEditForm((prev) => ({ ...prev, [field]: value }));
   };
 
-  const handlePriorityChange = async (newPriority) => {
+  const handleSave = async () => {
+    if (!editForm.message?.trim()) {
+      showToast('Pesan tidak boleh kosong', 'error');
+      return;
+    }
     setSaving(true);
     try {
-      const updated = await updateFeedback(item.id, { priority: newPriority });
+      const payload = {};
+      if (editForm.type !== (item.type || 'feedback')) payload.type = editForm.type;
+      if (editForm.category !== item.category) payload.category = editForm.category;
+      if (editForm.message.trim() !== item.message) payload.message = editForm.message.trim();
+      if ((editForm.name || null) !== (item.name || null)) payload.name = editForm.name || null;
+      if ((editForm.wa_number || null) !== (item.wa_number || null)) payload.wa_number = editForm.wa_number || null;
+      if ((editForm.priority || null) !== (item.priority || null)) payload.priority = editForm.priority || null;
+      if (editForm.status !== item.status) payload.status = editForm.status;
+
+      if (Object.keys(payload).length === 0) {
+        showToast('Tidak ada perubahan');
+        onOpenChange(false);
+        return;
+      }
+
+      const updated = await updateFeedback(item.id, payload);
       onUpdate(updated);
-      showToast('Prioritas diperbarui');
+      showToast('Feedback diperbarui');
+      onOpenChange(false);
     } catch (err) {
       showToast(err.message, 'error');
     } finally {
@@ -181,81 +227,197 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[540px]">
         <DialogHeader>
-          <DialogTitle>Detail Feedback</DialogTitle>
+          <DialogTitle>Detail {(item.type || 'feedback') === 'idea' ? 'Idea' : 'Feedback'}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <CategoryBadge category={item.category} />
-            {item.priority && <PriorityBadge priority={item.priority} />}
-          </div>
+          {/* Type */}
+          {isSuperAdmin ? (
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Tipe</Label>
+              <div className="flex gap-2">
+                {Object.entries(TYPE_CONFIG).map(([key, cfg]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => updateField('type', key)}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
+                      editForm.type === key
+                        ? TYPE_ACTIVE[key]
+                        : 'bg-white text-text-2 border-border hover:border-green'
+                    )}
+                  >
+                    {cfg.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <TypeBadge type={item.type || 'feedback'} />
+            </div>
+          )}
 
+          {/* Category */}
+          {isSuperAdmin ? (
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Kategori</Label>
+              <div className="flex gap-2">
+                {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => updateField('category', key)}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
+                      editForm.category === key
+                        ? cfg.className
+                        : 'bg-white text-text-2 border-border hover:border-green'
+                    )}
+                  >
+                    {cfg.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <CategoryBadge category={item.category} />
+              {item.priority && <PriorityBadge priority={item.priority} />}
+            </div>
+          )}
+
+          {/* Message */}
           <div>
-            <Label className="text-text-3 text-xs">Pesan</Label>
-            <p className="text-sm text-text mt-1 whitespace-pre-wrap">{item.message}</p>
+            <Label className="text-xs text-text-3 mb-1.5 block">Pesan</Label>
+            {isSuperAdmin ? (
+              <Textarea
+                value={editForm.message}
+                onChange={(e) => updateField('message', e.target.value)}
+                className="min-h-[100px]"
+              />
+            ) : (
+              <p className="text-sm text-text mt-1 whitespace-pre-wrap">{item.message}</p>
+            )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <span className="text-text-3 text-xs block">Nama</span>
-              <span className="text-text">{item.name || 'Anonim'}</span>
+          {/* Name + WA */}
+          {isSuperAdmin ? (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs text-text-3 mb-1.5 block">Nama</Label>
+                <Input
+                  value={editForm.name}
+                  onChange={(e) => updateField('name', e.target.value)}
+                  placeholder="Nama pengirim"
+                />
+              </div>
+              <div>
+                <Label className="text-xs text-text-3 mb-1.5 block">WhatsApp</Label>
+                <Input
+                  value={editForm.wa_number}
+                  onChange={(e) => updateField('wa_number', e.target.value)}
+                  placeholder="08xxxxxxxxxx"
+                />
+              </div>
             </div>
-            <div>
-              <span className="text-text-3 text-xs block">WhatsApp</span>
-              <span className="text-text">{item.wa_number ? formatWA(item.wa_number) : '-'}</span>
+          ) : (
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <span className="text-text-3 text-xs block">Nama</span>
+                <span className="text-text">{item.name || 'Anonim'}</span>
+              </div>
+              <div>
+                <span className="text-text-3 text-xs block">WhatsApp</span>
+                <span className="text-text">{item.wa_number ? formatWA(item.wa_number) : '-'}</span>
+              </div>
             </div>
-            <div>
-              <span className="text-text-3 text-xs block">Tanggal</span>
-              <span className="text-text">{formatDate(item.created_at)}</span>
-            </div>
-            <div>
-              <span className="text-text-3 text-xs block">Status</span>
-              <span className="text-text">{COLUMNS.find((c) => c.id === item.status)?.label || item.status}</span>
-            </div>
-          </div>
+          )}
 
+          {/* Date + Status (read-only for non-super_admin) */}
+          {!isSuperAdmin && (
+            <div className="grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <span className="text-text-3 text-xs block">Tanggal</span>
+                <span className="text-text">{formatDate(item.created_at)}</span>
+              </div>
+              <div>
+                <span className="text-text-3 text-xs block">Status</span>
+                <span className="text-text">{COLUMNS.find((c) => c.id === item.status)?.label || item.status}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Date (always shown for super_admin too) */}
           {isSuperAdmin && (
-            <>
-              <Separator />
-              <div>
-                <Label className="text-xs text-text-3 mb-1.5 block">Prioritas</Label>
-                <div className="flex gap-2">
-                  {['low', 'medium', 'high'].map((p) => (
-                    <button
-                      key={p}
-                      onClick={() => handlePriorityChange(p)}
-                      disabled={saving}
-                      className={cn(
-                        'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
-                        item.priority === p
-                          ? PRIORITY_ACTIVE[p]
-                          : 'bg-white text-text-2 border-border hover:border-green'
-                      )}
-                    >
-                      {PRIORITY_CONFIG[p].label}
-                    </button>
-                  ))}
-                </div>
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Tanggal</Label>
+              <span className="text-sm text-text">{formatDate(item.created_at)}</span>
+            </div>
+          )}
+
+          {/* Priority (super_admin editable) */}
+          {isSuperAdmin && (
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Prioritas</Label>
+              <div className="flex gap-2">
+                {['low', 'medium', 'high'].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => updateField('priority', editForm.priority === p ? '' : p)}
+                    disabled={saving}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
+                      editForm.priority === p
+                        ? PRIORITY_ACTIVE[p]
+                        : 'bg-white text-text-2 border-border hover:border-green'
+                    )}
+                  >
+                    {PRIORITY_CONFIG[p].label}
+                  </button>
+                ))}
               </div>
-              <div>
-                <Label className="text-xs text-text-3 mb-1.5 block">Pindah ke</Label>
-                <div className="flex flex-wrap gap-2">
-                  {COLUMNS.filter((c) => c.id !== item.status).map((col) => (
-                    <Button
-                      key={col.id}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleStatusChange(col.id)}
-                      disabled={saving}
-                    >
-                      {col.label}
-                    </Button>
-                  ))}
-                </div>
+            </div>
+          )}
+
+          {/* Status (super_admin editable) */}
+          {isSuperAdmin && (
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Status</Label>
+              <div className="flex flex-wrap gap-2">
+                {COLUMNS.map((col) => (
+                  <button
+                    key={col.id}
+                    type="button"
+                    onClick={() => updateField('status', col.id)}
+                    disabled={saving}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
+                      editForm.status === col.id
+                        ? 'bg-green-light text-green border-green'
+                        : 'bg-white text-text-2 border-border hover:border-green'
+                    )}
+                  >
+                    {col.label}
+                  </button>
+                ))}
               </div>
-            </>
+            </div>
           )}
         </div>
+
+        {isSuperAdmin && (
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
+              Batal
+            </Button>
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? 'Menyimpan...' : 'Simpan'}
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -271,10 +433,11 @@ export default function FeedbackPage() {
   const [loading, setLoading] = useState(true);
   const [activeCard, setActiveCard] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [typeFilter, setTypeFilter] = useState('all');
 
   // Create dialog state
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [form, setForm] = useState({ category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo' });
+  const [form, setForm] = useState({ type: 'feedback', category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo' });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
 
@@ -296,14 +459,24 @@ export default function FeedbackPage() {
     fetchItems();
   }, [fetchItems]);
 
+  const typeTabs = useMemo(() => [
+    { key: 'all', label: 'Semua', count: items.length },
+    { key: 'feedback', label: 'Feedback', count: items.filter((i) => (i.type || 'feedback') === 'feedback').length },
+    { key: 'idea', label: 'Idea', count: items.filter((i) => (i.type || 'feedback') === 'idea').length },
+  ], [items]);
+
   const columns = useMemo(() => {
+    const filtered = typeFilter === 'all'
+      ? items
+      : items.filter((item) => (item.type || 'feedback') === typeFilter);
+
     return COLUMNS.map((col) => ({
       ...col,
-      items: items
+      items: filtered
         .filter((item) => item.status === col.id)
         .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
     }));
-  }, [items]);
+  }, [items, typeFilter]);
 
   const handleDragStart = (event) => {
     const item = items.find((i) => i.id === event.active.id);
@@ -340,11 +513,11 @@ export default function FeedbackPage() {
 
   const handleItemUpdate = (updated) => {
     setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
-    setSelectedItem(updated);
+    setSelectedItem(null);
   };
 
-  const openCreateDialog = () => {
-    setForm({ category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo' });
+  const openCreateDialog = (type = 'feedback') => {
+    setForm({ type, category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo' });
     setErrors({});
     setShowCreateDialog(true);
   };
@@ -357,6 +530,7 @@ export default function FeedbackPage() {
     setSaving(true);
     try {
       await createFeedback({
+        type: form.type,
         category: form.category,
         message: form.message.trim(),
         name: form.name.trim() || null,
@@ -364,7 +538,7 @@ export default function FeedbackPage() {
         priority: form.priority || null,
         status: form.status,
       });
-      showToast('Feedback ditambahkan');
+      showToast(form.type === 'idea' ? 'Idea ditambahkan' : 'Feedback ditambahkan');
       setShowCreateDialog(false);
       fetchItems();
     } catch (err) {
@@ -392,15 +566,21 @@ export default function FeedbackPage() {
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-4">
-        <h1 className="font-heading font-bold text-xl text-text">Feedback</h1>
+        <h1 className="font-heading font-bold text-xl text-text">Feedback & Backlog</h1>
         <div className="flex items-center gap-3">
           <span className="text-sm text-text-3">{items.length} total</span>
-          <Button onClick={openCreateDialog}>
+          <Button variant="outline" onClick={() => openCreateDialog('idea')}>
+            <Plus className="h-4 w-4 mr-1.5" />
+            Tambah Idea
+          </Button>
+          <Button onClick={() => openCreateDialog('feedback')}>
             <Plus className="h-4 w-4 mr-1.5" />
             Tambah Feedback
           </Button>
         </div>
       </div>
+
+      <FilterTabs tabs={typeTabs} activeTab={typeFilter} onTabChange={setTypeFilter} />
 
       <DndContext
         sensors={sensors}
@@ -408,7 +588,7 @@ export default function FeedbackPage() {
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: 'calc(100vh - 180px)' }}>
+        <div className="flex gap-4 overflow-x-auto pb-4" style={{ minHeight: 'calc(100vh - 220px)' }}>
           {columns.map((col) => (
             <KanbanColumn
               key={col.id}
@@ -440,10 +620,32 @@ export default function FeedbackPage() {
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent className="max-w-[540px]">
           <DialogHeader>
-            <DialogTitle>Tambah Feedback</DialogTitle>
+            <DialogTitle>{form.type === 'idea' ? 'Tambah Idea' : 'Tambah Feedback'}</DialogTitle>
           </DialogHeader>
 
           <div className="space-y-4">
+            {/* Type */}
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Tipe</Label>
+              <div className="flex gap-2">
+                {Object.entries(TYPE_CONFIG).map(([key, cfg]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, type: key }))}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
+                      form.type === key
+                        ? TYPE_ACTIVE[key]
+                        : 'bg-white text-text-2 border-border hover:border-green'
+                    )}
+                  >
+                    {cfg.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Category */}
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Kategori</Label>
@@ -471,7 +673,7 @@ export default function FeedbackPage() {
               <Label className="text-xs text-text-3 mb-1.5 block">Pesan *</Label>
               <Textarea
                 value={form.message}
-                onChange={(e) => { setForm((f) => ({ ...f, message: e.target.value })); setErrors((e) => ({ ...e, message: undefined })); }}
+                onChange={(e) => { setForm((f) => ({ ...f, message: e.target.value })); setErrors((er) => ({ ...er, message: undefined })); }}
                 placeholder="Tulis feedback..."
                 className="min-h-[150px]"
               />

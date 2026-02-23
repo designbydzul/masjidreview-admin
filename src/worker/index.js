@@ -433,6 +433,41 @@ async function runMigrations(env) {
     await env.DB.prepare('INSERT INTO _migrations (version) VALUES (5)').run();
   }
 
+  // v6: Add type column to feedback + seed backlog ideas
+  if (currentVersion < 6) {
+    try {
+      await env.DB.prepare("ALTER TABLE feedback ADD COLUMN type TEXT NOT NULL DEFAULT 'feedback'").run();
+    } catch (e) { /* column may already exist */ }
+
+    // Seed backlog ideas (only if none exist yet)
+    const existingIdeas = await env.DB.prepare("SELECT COUNT(*) as cnt FROM feedback WHERE type = 'idea'").first();
+    if (!existingIdeas || existingIdeas.cnt === 0) {
+      const ideas = [
+        'Feedback Hub: Form publik (/feedback) untuk user kirim feedback (bug, saran, umum) tanpa login. Admin side: kanban board untuk manage feedback, admin bisa kategorisasi dan set prioritas.',
+        'Program Masjid: Section baru di detail page untuk info program unggulan masjid (buka puasa Senin-Kamis, kajian rutin, tahfidz, dll). Dari feedback user.',
+        'Masjid Near Me: Fitur nearby mosques berdasarkan GPS/lokasi user, tampilkan masjid terdekat dari database.',
+        'Sistem "Masjid Heroes": Ada profile page, review history, dan badge per user. Seperti Google Maps contributors.',
+        'Search by keyword: Cari masjid by nama atau alamat.',
+        'Map view: Menampilkan semua masjid di peta.',
+        'Filter tambahan: Rakaat (11/23) dan Tempo (khusyuk/sedang/cepat) sebagai opsi filter listing.',
+        'WhatsApp Community integration lebih dalam ke web app.',
+        'Community onboarding via bot: Bot tanya data dasar (nama, profesi, kota) saat calon member join WA community.',
+        'Daily digest ke WA group kalau ada banyak pending submissions.',
+        'Gamification: Streak badges untuk reviewer yang konsisten, "Top Reviewer" per kota.',
+        'Rejection reason (internal note) di admin dashboard.',
+        'Audit log untuk tracking admin actions.',
+        'Drop deprecated tables: admins dan sessions (admin sessions lama).',
+      ];
+      for (const msg of ideas) {
+        await env.DB.prepare(
+          "INSERT INTO feedback (id, type, category, message, name, priority, status, created_at) VALUES (?, 'idea', 'umum', ?, 'Tim Masjid Review', NULL, 'todo', ?)"
+        ).bind(crypto.randomUUID(), msg, new Date().toISOString()).run();
+      }
+    }
+
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (6)').run();
+  }
+
   migrated = true;
 }
 
@@ -1572,13 +1607,22 @@ export default {
 
         const url = new URL(request.url);
         const status = url.searchParams.get('status');
+        const type = url.searchParams.get('type');
 
         let sql = 'SELECT * FROM feedback';
+        const conditions = [];
         const params = [];
 
         if (status && ['todo', 'in_progress', 'hold', 'done', 'archived'].includes(status)) {
-          sql += ' WHERE status = ?';
+          conditions.push('status = ?');
           params.push(status);
+        }
+        if (type && ['feedback', 'idea'].includes(type)) {
+          conditions.push('type = ?');
+          params.push(type);
+        }
+        if (conditions.length > 0) {
+          sql += ' WHERE ' + conditions.join(' AND ');
         }
 
         sql += ' ORDER BY created_at DESC';
@@ -1596,11 +1640,14 @@ export default {
         if (!admin) return json({ error: 'Unauthorized' }, 401);
 
         const body = await request.json();
-        const { category, message, name, wa_number, priority, status } = body;
+        const { category, message, name, wa_number, priority, status, type } = body;
 
         if (!category || !message) return json({ error: 'Category dan message wajib diisi' }, 400);
         if (!['bug', 'saran', 'umum'].includes(category)) return json({ error: 'Category tidak valid' }, 400);
         if (priority && !['low', 'medium', 'high'].includes(priority)) return json({ error: 'Priority tidak valid' }, 400);
+
+        const feedbackType = type || 'feedback';
+        if (!['feedback', 'idea'].includes(feedbackType)) return json({ error: 'Type tidak valid' }, 400);
 
         const feedbackStatus = status || 'todo';
         if (!['todo', 'in_progress', 'hold', 'done', 'archived'].includes(feedbackStatus)) return json({ error: 'Status tidak valid' }, 400);
@@ -1609,8 +1656,8 @@ export default {
         const createdAt = new Date().toISOString();
 
         await env.DB.prepare(
-          'INSERT INTO feedback (id, category, message, name, wa_number, priority, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(id, category, message, name || null, wa_number || null, priority || null, feedbackStatus, createdAt).run();
+          'INSERT INTO feedback (id, type, category, message, name, wa_number, priority, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(id, feedbackType, category, message, name || null, wa_number || null, priority || null, feedbackStatus, createdAt).run();
 
         const entry = await env.DB.prepare('SELECT * FROM feedback WHERE id = ?').bind(id).first();
         return json(entry, 201);
@@ -1645,6 +1692,40 @@ export default {
           }
           setClauses.push('priority = ?');
           vals.push(body.priority);
+        }
+
+        if (body.type !== undefined) {
+          if (!['feedback', 'idea'].includes(body.type)) {
+            return json({ error: 'Type tidak valid' }, 400);
+          }
+          setClauses.push('type = ?');
+          vals.push(body.type);
+        }
+
+        if (body.category !== undefined) {
+          if (!['bug', 'saran', 'umum'].includes(body.category)) {
+            return json({ error: 'Category tidak valid' }, 400);
+          }
+          setClauses.push('category = ?');
+          vals.push(body.category);
+        }
+
+        if (body.message !== undefined) {
+          if (!body.message || !body.message.trim()) {
+            return json({ error: 'Message tidak boleh kosong' }, 400);
+          }
+          setClauses.push('message = ?');
+          vals.push(body.message.trim());
+        }
+
+        if (body.name !== undefined) {
+          setClauses.push('name = ?');
+          vals.push(body.name || null);
+        }
+
+        if (body.wa_number !== undefined) {
+          setClauses.push('wa_number = ?');
+          vals.push(body.wa_number || null);
         }
 
         if (setClauses.length === 0) {
