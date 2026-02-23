@@ -1,10 +1,39 @@
 import HTML from './frontend.js';
 
+// ── Security: Allowed Origins ──
+const ALLOWED_ORIGINS = [
+  "https://masjidreview-admin.designbydzul.workers.dev"
+];
+
+function getCorsHeaders(request) {
+  const origin = request && request.headers ? request.headers.get("Origin") : null;
+  const headers = {
+    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Credentials": "true",
+    "Vary": "Origin"
+  };
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+  }
+  return headers;
+}
+
+// ── Security: HTTP Headers ──
+const SECURITY_HEADERS = {
+  "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com; style-src 'self' 'unsafe-inline' https://accounts.google.com; img-src 'self' data: blob: https://masjidreview.id; connect-src 'self' https://accounts.google.com; frame-src https://accounts.google.com; frame-ancestors 'none'",
+  "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+  "X-Frame-Options": "DENY",
+  "X-Content-Type-Options": "nosniff",
+  "Referrer-Policy": "strict-origin-when-cross-origin",
+  "Permissions-Policy": "camera=(), microphone=(), geolocation=()"
+};
+
 // ── JSON Helper ──
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { ...getCorsHeaders(json._currentRequest), ...SECURITY_HEADERS, 'Content-Type': 'application/json' },
   });
 }
 
@@ -160,9 +189,9 @@ async function handleFonnteWebhook(request, env, ctx) {
       return json(r, 400);
     }
 
-    // ── Step 3: Lenient device validation (contains check) ──
+    // ── Step 3: Device validation (exact match) ──
     const deviceStr = String(body.device || '');
-    if (!deviceStr.includes('6285111043194')) {
+    if (deviceStr !== '6285111043194') {
       const r = { error: 'Invalid device', device_received: deviceStr };
       await logResult(r);
       return json(r, 400);
@@ -376,7 +405,14 @@ async function runMigrations(env) {
 
 export default {
   async fetch(request, env, ctx) {
+    // Store request reference for CORS origin checking in json() helper
+    json._currentRequest = request;
     const { pathname } = new URL(request.url);
+
+    // Handle CORS preflight
+    if (request.method === "OPTIONS") {
+      return new Response(null, { headers: { ...getCorsHeaders(request), ...SECURITY_HEADERS } });
+    }
 
     try {
       // Run database migrations (non-blocking — don't let migration errors kill routes)
@@ -415,12 +451,12 @@ export default {
             return json({ error: 'Nomor WhatsApp tidak terdaftar sebagai admin' }, 403);
           }
 
-          // Rate limit: max 3 OTP per hour
+          // Rate limit: max 3 OTP per 10 minutes
           const recentCount = await env.DB.prepare(
-            "SELECT COUNT(*) as cnt FROM otp_codes WHERE wa_number = ? AND created_at > datetime('now', '-1 hour')"
+            "SELECT COUNT(*) as cnt FROM otp_codes WHERE wa_number = ? AND created_at > datetime('now', '-10 minutes')"
           ).bind(wa).first();
           if (recentCount && recentCount.cnt >= 3) {
-            return json({ error: 'Terlalu banyak percobaan. Coba lagi nanti.' }, 429);
+            return json({ error: 'Terlalu banyak permintaan OTP. Silakan coba lagi dalam 10 menit.' }, 429);
           }
 
           const code = String(Math.floor(100000 + Math.random() * 900000));
@@ -496,6 +532,8 @@ export default {
             {
               status: 200,
               headers: {
+                ...getCorsHeaders(request),
+                ...SECURITY_HEADERS,
                 'Content-Type': 'application/json',
                 'Set-Cookie': sessionCookie(token),
               },
@@ -518,6 +556,8 @@ export default {
         return new Response(JSON.stringify({ ok: true }), {
           status: 200,
           headers: {
+            ...getCorsHeaders(request),
+            ...SECURITY_HEADERS,
             'Content-Type': 'application/json',
             'Set-Cookie': clearCookie(),
           },
@@ -585,6 +625,8 @@ export default {
             {
               status: 200,
               headers: {
+                ...getCorsHeaders(request),
+                ...SECURITY_HEADERS,
                 'Content-Type': 'application/json',
                 'Set-Cookie': sessionCookie(token),
               },
@@ -1029,8 +1071,10 @@ export default {
         }
       }
 
-      // ── POST /reviews (public — web submissions) ──
+      // ── POST /reviews (admin — create review) ──
       if (pathname === '/reviews' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
         const body = await request.json();
         if (!body.masjid_id || !body.reviewer_name) {
           return json({ error: 'masjid_id dan reviewer_name wajib diisi' }, 400);
@@ -1278,6 +1322,9 @@ export default {
       if (forceLogoutMatch && request.method === 'POST') {
         const admin = await getSession(request, env);
         if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') {
+          return json({ error: 'Hanya super_admin yang dapat force-logout user' }, 403);
+        }
         const userId = forceLogoutMatch[1];
         await env.DB.prepare('DELETE FROM user_sessions WHERE user_id = ?').bind(userId).run();
         return json({ ok: true });
@@ -1354,7 +1401,7 @@ export default {
 
       // ── Serve HTML for all other routes ──
       return new Response(HTML, {
-        headers: { 'Content-Type': 'text/html;charset=UTF-8' },
+        headers: { ...SECURITY_HEADERS, 'Content-Type': 'text/html;charset=UTF-8' },
       });
 
     } catch (err) {
