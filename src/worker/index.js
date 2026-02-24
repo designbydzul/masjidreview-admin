@@ -86,6 +86,24 @@ function clearCookie() {
   return 'admin_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0';
 }
 
+// ── Audit Log Helper ──
+
+async function logAudit(env, { adminId, adminName, action, resourceType, resourceId, resourceName, beforeData, afterData }) {
+  try {
+    const id = crypto.randomUUID();
+    await env.DB.prepare(
+      `INSERT INTO audit_logs (id, admin_id, admin_name, action, resource_type, resource_id, resource_name, before_data, after_data, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+    ).bind(
+      id, adminId, adminName, action, resourceType, resourceId || null, resourceName || null,
+      beforeData ? JSON.stringify(beforeData) : null,
+      afterData ? JSON.stringify(afterData) : null
+    ).run();
+  } catch (e) {
+    console.error('Audit log error:', e.message);
+  }
+}
+
 // ── Masjid Fuzzy Match ──
 
 async function matchMasjid(name, city, env) {
@@ -508,6 +526,27 @@ async function runMigrations(env) {
     // Migrate hold/archived → todo
     await env.DB.prepare("UPDATE feedback SET status = 'todo' WHERE status IN ('hold', 'archived')").run();
     await env.DB.prepare('INSERT INTO _migrations (version) VALUES (9)').run();
+  }
+
+  // v10: Audit log table
+  if (currentVersion < 10) {
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS audit_logs (
+      id TEXT PRIMARY KEY,
+      admin_id TEXT NOT NULL,
+      admin_name TEXT NOT NULL,
+      action TEXT NOT NULL,
+      resource_type TEXT NOT NULL,
+      resource_id TEXT,
+      resource_name TEXT,
+      before_data TEXT,
+      after_data TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )`).run();
+    await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at)').run();
+    await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action)').run();
+    await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource_type)').run();
+    await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_audit_logs_admin ON audit_logs(admin_id)').run();
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (10)').run();
   }
 
   migrated = true;
@@ -999,6 +1038,7 @@ export default {
           }
         }
 
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: status === 'approved' ? 'suggestion_bulk_approve' : 'suggestion_bulk_reject', resourceType: 'facility_suggestion', resourceId: null, resourceName: null, beforeData: { ids, count: ids.length }, afterData: { status } });
         return json({ ok: true, updated: suggestions.length });
       }
 
@@ -1031,6 +1071,7 @@ export default {
         }
 
         const updated = await env.DB.prepare('SELECT * FROM facility_suggestions WHERE id = ?').bind(sugId).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: body.action === 'approve' ? 'suggestion_approve' : 'suggestion_reject', resourceType: 'facility_suggestion', resourceId: sugId, resourceName: suggestion.facility_name || suggestion.suggested_value, beforeData: { status: suggestion.status }, afterData: { status: body.action === 'approve' ? 'approved' : 'rejected' } });
         return json(updated);
       }
 
@@ -1105,6 +1146,7 @@ export default {
         }
 
         const created = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(id).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'masjid_create', resourceType: 'masjid', resourceId: id, resourceName: body.name, beforeData: null, afterData: { name: body.name, city: body.city, status: 'approved' } });
         return json(created, 201);
       }
 
@@ -1181,6 +1223,7 @@ export default {
         for (let i = 0; i < ids.length; i++) {
           await env.DB.prepare('UPDATE masjid SET status = ? WHERE id = ?').bind(status, ids[i]).run();
         }
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: status === 'approved' ? 'masjid_bulk_approve' : 'masjid_bulk_reject', resourceType: 'masjid', resourceId: null, resourceName: null, beforeData: { ids, count: ids.length }, afterData: { status } });
         return json({ ok: true, updated: ids.length });
       }
 
@@ -1197,9 +1240,11 @@ export default {
           return json({ error: 'Status harus approved atau rejected' }, 400);
         }
 
+        const beforeMasjid = await env.DB.prepare('SELECT id, name, status FROM masjid WHERE id = ?').bind(masjidId).first();
         await env.DB.prepare('UPDATE masjid SET status = ? WHERE id = ?').bind(body.status, masjidId).run();
         const updated = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(masjidId).first();
         if (!updated) return json({ error: 'Masjid not found' }, 404);
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: body.status === 'approved' ? 'masjid_approve' : 'masjid_reject', resourceType: 'masjid', resourceId: masjidId, resourceName: beforeMasjid?.name, beforeData: { status: beforeMasjid?.status }, afterData: { status: body.status } });
         return json(updated);
       }
 
@@ -1234,6 +1279,8 @@ export default {
         if (request.method === 'PUT') {
           const body = await request.json();
           const allowedCols = ['name','city','address','photo_url','google_maps_url','latitude','longitude','ig_post_url','info_label','info_photos','ramadan_takjil','ramadan_makanan_berat','ramadan_ceramah_tarawih','ramadan_mushaf_alquran','ramadan_itikaf','ramadan_parkir','ramadan_rakaat','ramadan_tempo','akhwat_wudhu_private','akhwat_mukena_available','akhwat_ac_available','akhwat_safe_entrance','status'];
+
+          const beforeMasjid = await env.DB.prepare('SELECT id, name, city, address, latitude, longitude, status FROM masjid WHERE id = ?').bind(masjidId).first();
 
           const setClauses = [];
           const vals = [];
@@ -1271,6 +1318,9 @@ export default {
           }
 
           const updated = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(masjidId).first();
+          const afterData = {};
+          for (const col of ['name', 'city', 'address', 'latitude', 'longitude', 'status']) { if (body[col] !== undefined) afterData[col] = body[col]; }
+          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'masjid_edit', resourceType: 'masjid', resourceId: masjidId, resourceName: beforeMasjid?.name, beforeData: beforeMasjid ? { name: beforeMasjid.name, city: beforeMasjid.city, address: beforeMasjid.address, status: beforeMasjid.status } : null, afterData });
           return json(updated);
         }
 
@@ -1279,7 +1329,9 @@ export default {
           if (admin.role !== 'super_admin') {
             return json({ error: 'Hanya super_admin yang dapat menghapus masjid' }, 403);
           }
+          const beforeMasjid = await env.DB.prepare('SELECT id, name, city, status FROM masjid WHERE id = ?').bind(masjidId).first();
           await env.DB.prepare('DELETE FROM masjid WHERE id = ?').bind(masjidId).run();
+          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'masjid_delete', resourceType: 'masjid', resourceId: masjidId, resourceName: beforeMasjid?.name, beforeData: beforeMasjid ? { name: beforeMasjid.name, city: beforeMasjid.city, status: beforeMasjid.status } : null, afterData: null });
           return json({ ok: true });
         }
       }
@@ -1347,6 +1399,7 @@ export default {
         const created = await env.DB.prepare(
           "SELECT r.*, m.name as masjid_name FROM reviews r LEFT JOIN masjid m ON r.masjid_id = m.id WHERE r.id = ?"
         ).bind(id).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'review_create', resourceType: 'review', resourceId: id, resourceName: body.reviewer_name, beforeData: null, afterData: { reviewer_name: body.reviewer_name, rating: body.rating || null, masjid_id: body.masjid_id, status: 'approved' } });
         return json(created, 201);
       }
 
@@ -1393,6 +1446,7 @@ export default {
             await env.DB.prepare('UPDATE reviews SET status = ? WHERE id = ?').bind(status, ids[i]).run();
           }
         }
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: status === 'approved' ? 'review_bulk_approve' : 'review_bulk_reject', resourceType: 'review', resourceId: null, resourceName: null, beforeData: { ids, count: ids.length }, afterData: { status } });
         return json({ ok: true, updated: ids.length });
       }
 
@@ -1409,6 +1463,8 @@ export default {
           return json({ error: 'Status harus approved atau rejected' }, 400);
         }
 
+        const beforeReview = await env.DB.prepare('SELECT id, status, reviewer_name FROM reviews WHERE id = ?').bind(reviewId).first();
+
         if (body.status === 'approved') {
           await env.DB.prepare('UPDATE reviews SET status = ?, validated_by = ? WHERE id = ?')
             .bind(body.status, admin.name, reviewId).run();
@@ -1421,6 +1477,7 @@ export default {
           "SELECT r.*, m.name as masjid_name FROM reviews r LEFT JOIN masjid m ON r.masjid_id = m.id WHERE r.id = ?"
         ).bind(reviewId).first();
         if (!updated) return json({ error: 'Review not found' }, 404);
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: body.status === 'approved' ? 'review_approve' : 'review_reject', resourceType: 'review', resourceId: reviewId, resourceName: beforeReview?.reviewer_name, beforeData: { status: beforeReview?.status }, afterData: { status: body.status } });
         return json(updated);
       }
 
@@ -1446,6 +1503,8 @@ export default {
           const body = await request.json();
           const allowedCols = ['reviewer_name', 'rating', 'short_description', 'source_url', 'source_platform', 'masjid_id'];
 
+          const beforeReview = await env.DB.prepare('SELECT id, reviewer_name, rating, short_description, source_url, source_platform, masjid_id FROM reviews WHERE id = ?').bind(reviewId).first();
+
           const setClauses = [];
           const vals = [];
           for (const col of allowedCols) {
@@ -1465,6 +1524,9 @@ export default {
           const updated = await env.DB.prepare(
             "SELECT r.*, m.name as masjid_name FROM reviews r LEFT JOIN masjid m ON r.masjid_id = m.id WHERE r.id = ?"
           ).bind(reviewId).first();
+          const afterData = {};
+          for (const col of allowedCols) { if (body[col] !== undefined) afterData[col] = body[col]; }
+          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'review_edit', resourceType: 'review', resourceId: reviewId, resourceName: beforeReview?.reviewer_name, beforeData: beforeReview ? { reviewer_name: beforeReview.reviewer_name, rating: beforeReview.rating, short_description: beforeReview.short_description } : null, afterData });
           return json(updated);
         }
 
@@ -1473,7 +1535,9 @@ export default {
           if (admin.role !== 'super_admin') {
             return json({ error: 'Hanya super_admin yang dapat menghapus review' }, 403);
           }
+          const beforeReview = await env.DB.prepare('SELECT id, reviewer_name, rating, short_description, masjid_id, status FROM reviews WHERE id = ?').bind(reviewId).first();
           await env.DB.prepare('DELETE FROM reviews WHERE id = ?').bind(reviewId).run();
+          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'review_delete', resourceType: 'review', resourceId: reviewId, resourceName: beforeReview?.reviewer_name, beforeData: beforeReview ? { reviewer_name: beforeReview.reviewer_name, rating: beforeReview.rating, status: beforeReview.status } : null, afterData: null });
           return json({ ok: true });
         }
       }
@@ -1513,6 +1577,7 @@ export default {
         ).bind(id, name, rawWA, city, age_range).run();
 
         const created = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'user_create', resourceType: 'user', resourceId: id, resourceName: name, beforeData: null, afterData: { name, wa_number: rawWA } });
         return json(created, 201);
       }
 
@@ -1540,6 +1605,7 @@ export default {
         }
         const userId = forceLogoutMatch[1];
         await env.DB.prepare('DELETE FROM user_sessions WHERE user_id = ?').bind(userId).run();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'user_force_logout', resourceType: 'user', resourceId: userId, resourceName: null, beforeData: null, afterData: null });
         return json({ ok: true });
       }
 
@@ -1558,7 +1624,7 @@ export default {
         if (admin.id === userId) {
           return json({ error: 'Tidak dapat mengubah role diri sendiri' }, 400);
         }
-        const target = await env.DB.prepare('SELECT id, role FROM users WHERE id = ?').bind(userId).first();
+        const target = await env.DB.prepare('SELECT id, name, role FROM users WHERE id = ?').bind(userId).first();
         if (!target) return json({ error: 'User tidak ditemukan' }, 404);
         await env.DB.prepare('UPDATE users SET role = ? WHERE id = ?').bind(newRole, userId).run();
         // If demoting, clear their sessions
@@ -1566,6 +1632,7 @@ export default {
           await env.DB.prepare('DELETE FROM user_sessions WHERE user_id = ?').bind(userId).run();
         }
         const updated = await env.DB.prepare('SELECT id, name, wa_number, role, created_at FROM users WHERE id = ?').bind(userId).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: (newRole === 'admin' || newRole === 'super_admin') ? 'user_promote' : 'user_demote', resourceType: 'user', resourceId: userId, resourceName: target.name, beforeData: { role: target.role }, afterData: { role: newRole } });
         return json(updated);
       }
 
@@ -1587,6 +1654,7 @@ export default {
 
         if (request.method === 'PUT') {
           const body = await request.json();
+          const beforeUser = await env.DB.prepare('SELECT id, name, city, age_range FROM users WHERE id = ?').bind(userId).first();
           const name = body.name ? String(body.name).trim() : null;
           const city = body.city ? String(body.city).trim() : null;
           const age_range = body.age_range !== undefined ? (body.age_range ? String(body.age_range).trim() : null) : undefined;
@@ -1597,6 +1665,7 @@ export default {
             await env.DB.prepare('UPDATE users SET name = ?, city = ? WHERE id = ?').bind(name, city || null, userId).run();
           }
           const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
+          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'user_edit', resourceType: 'user', resourceId: userId, resourceName: beforeUser?.name, beforeData: beforeUser ? { name: beforeUser.name, city: beforeUser.city, age_range: beforeUser.age_range } : null, afterData: { name, city, ...(age_range !== undefined ? { age_range } : {}) } });
           return json(updated);
         }
 
@@ -1604,7 +1673,7 @@ export default {
           if (admin.role !== 'super_admin') return json({ error: 'Hanya super_admin yang dapat menghapus user' }, 403);
           if (userId === admin.id) return json({ error: 'Tidak bisa menghapus akun sendiri' }, 400);
 
-          const user = await env.DB.prepare('SELECT wa_number FROM users WHERE id = ?').bind(userId).first();
+          const user = await env.DB.prepare('SELECT id, name, wa_number, role FROM users WHERE id = ?').bind(userId).first();
           if (!user) return json({ error: 'User not found' }, 404);
 
           // 1. Delete all sessions
@@ -1618,6 +1687,7 @@ export default {
           // 5. Delete user
           await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();
 
+          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'user_delete', resourceType: 'user', resourceId: userId, resourceName: user.name, beforeData: { name: user.name, wa_number: user.wa_number, role: user.role }, afterData: null });
           return json({ ok: true });
         }
       }
@@ -1826,6 +1896,7 @@ export default {
         const entry = await env.DB.prepare(
           'SELECT f.*, u.name as assigned_to_name FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id WHERE f.id = ?'
         ).bind(id).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'feedback_create', resourceType: 'feedback', resourceId: id, resourceName: name || 'Anonim', beforeData: null, afterData: { type: feedbackType, category, status: feedbackStatus } });
         return json(entry, 201);
       }
 
@@ -1923,6 +1994,19 @@ export default {
         const updated = await env.DB.prepare(
           'SELECT f.*, u.name as assigned_to_name FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id WHERE f.id = ?'
         ).bind(feedbackId).first();
+        // Determine if this is just a status change or a broader edit
+        const onlyStatusChanged = Object.keys(body).length === 1 && body.status !== undefined;
+        const auditAction = onlyStatusChanged ? 'feedback_status_change' : 'feedback_edit';
+        const beforeData = { status: existing.status, priority: existing.priority, due_date: existing.due_date, assigned_to: existing.assigned_to };
+        const afterData = {};
+        if (body.status !== undefined) afterData.status = body.status;
+        if (body.priority !== undefined) afterData.priority = body.priority;
+        if (body.due_date !== undefined) afterData.due_date = body.due_date;
+        if (body.assigned_to !== undefined) afterData.assigned_to = body.assigned_to;
+        if (body.type !== undefined) afterData.type = body.type;
+        if (body.category !== undefined) afterData.category = body.category;
+        if (body.message !== undefined) afterData.message = body.message;
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: auditAction, resourceType: 'feedback', resourceId: feedbackId, resourceName: existing.name || 'Anonim', beforeData, afterData });
         return json(updated);
       }
 
@@ -1936,7 +2020,71 @@ export default {
         if (!existing) return json({ error: 'Feedback tidak ditemukan' }, 404);
 
         await env.DB.prepare('DELETE FROM feedback WHERE id = ?').bind(feedbackId).run();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'feedback_delete', resourceType: 'feedback', resourceId: feedbackId, resourceName: existing.name || 'Anonim', beforeData: { type: existing.type, category: existing.category, message: existing.message, status: existing.status }, afterData: null });
         return json({ ok: true });
+      }
+
+      // ── GET /api/audit-logs ──
+      const auditLogIdMatch = pathname.match(/^\/api\/audit-logs\/([^/]+)$/);
+
+      if (pathname === '/api/audit-logs' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') return json({ error: 'Hanya super_admin yang dapat mengakses audit log' }, 403);
+
+        const url = new URL(request.url);
+        const action = url.searchParams.get('action');
+        const resourceType = url.searchParams.get('resource_type');
+        const adminId = url.searchParams.get('admin_id');
+        const from = url.searchParams.get('from');
+        const to = url.searchParams.get('to');
+        const page = Math.max(1, parseInt(url.searchParams.get('page') || '1', 10));
+        const perPage = Math.min(100, Math.max(1, parseInt(url.searchParams.get('per_page') || '50', 10)));
+        const offset = (page - 1) * perPage;
+
+        const conditions = [];
+        const binds = [];
+
+        if (action) { conditions.push('action = ?'); binds.push(action); }
+        if (resourceType) { conditions.push('resource_type = ?'); binds.push(resourceType); }
+        if (adminId) { conditions.push('admin_id = ?'); binds.push(adminId); }
+
+        if (from) {
+          conditions.push('created_at >= ?');
+          binds.push(from);
+        } else {
+          conditions.push("created_at >= datetime('now', '-30 days')");
+        }
+        if (to) {
+          conditions.push('created_at <= ?');
+          binds.push(to + ' 23:59:59');
+        }
+
+        const where = conditions.length > 0 ? ' WHERE ' + conditions.join(' AND ') : '';
+
+        const countRow = await env.DB.prepare('SELECT COUNT(*) as total FROM audit_logs' + where).bind(...binds).first();
+        const { results } = await env.DB.prepare(
+          'SELECT id, admin_id, admin_name, action, resource_type, resource_id, resource_name, created_at FROM audit_logs' + where + ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+        ).bind(...binds, perPage, offset).all();
+
+        return json({ data: results, total: countRow.total, page, per_page: perPage });
+      }
+
+      // ── GET /api/audit-logs/:id ──
+      if (auditLogIdMatch && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') return json({ error: 'Hanya super_admin yang dapat mengakses audit log' }, 403);
+
+        const logId = auditLogIdMatch[1];
+        const log = await env.DB.prepare('SELECT * FROM audit_logs WHERE id = ?').bind(logId).first();
+        if (!log) return json({ error: 'Log tidak ditemukan' }, 404);
+
+        return json({
+          ...log,
+          before_data: log.before_data ? JSON.parse(log.before_data) : null,
+          after_data: log.after_data ? JSON.parse(log.after_data) : null,
+        });
       }
 
       // ── GET /api/analytics/overview ──

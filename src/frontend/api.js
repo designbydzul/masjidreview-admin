@@ -104,6 +104,15 @@ export const createFeedback = (data) => apiFetch('/api/feedback', { method: 'POS
 export const updateFeedback = (id, data) => apiFetch('/api/feedback/' + id, { method: 'PATCH', body: JSON.stringify(data) });
 export const deleteFeedback = (id) => apiFetch('/api/feedback/' + id, { method: 'DELETE' });
 
+// Audit Log
+export const getAuditLogs = (params = {}) => {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => { if (v) qs.set(k, v); });
+  const q = qs.toString();
+  return apiFetch('/api/audit-logs' + (q ? '?' + q : ''));
+};
+export const getAuditLog = (id) => apiFetch('/api/audit-logs/' + id);
+
 // Analytics
 const analyticsQs = (from, to) => '?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
 export const getAnalyticsOverview = (from, to) => apiFetch('/api/analytics/overview' + analyticsQs(from, to));

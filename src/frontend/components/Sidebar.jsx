@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Building2, Star, Users, KeyRound, Settings, MessageSquare, ScrollText, BarChart3, LogOut, ChevronsLeft, ChevronsRight, X } from 'lucide-react';
+import { LayoutDashboard, Building2, Star, Users, KeyRound, Settings, MessageSquare, ScrollText, BarChart3, ClipboardList, LogOut, ChevronsLeft, ChevronsRight, X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
 import Logo from './Logo';
@@ -14,6 +14,7 @@ const navItems = [
   { to: '/fasilitas', label: 'Fasilitas', icon: Settings },
   { to: '/feedback', label: 'Feedback Hub', icon: MessageSquare },
   { to: '/changelog', label: 'Changelog', icon: ScrollText },
+  { to: '/audit-log', label: 'Audit Log', icon: ClipboardList, superOnly: true },
 ];
 
 export default function Sidebar({ collapsed, onToggle, mobileOpen, onMobileClose }) {
