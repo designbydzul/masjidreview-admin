@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
-import { Plus, Search, Trash2 } from 'lucide-react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Plus, Search, Trash2, Clock, Paperclip, FileText, X, Upload } from 'lucide-react';
 import {
   DndContext,
   DragOverlay,
@@ -12,13 +12,14 @@ import {
 } from '@dnd-kit/core';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { getFeedback, createFeedback, updateFeedback, deleteFeedback } from '../api';
+import { getFeedback, createFeedback, updateFeedback, deleteFeedback, uploadFile, getAdmins } from '../api';
 import { useConfirm } from '../contexts/ConfirmContext';
 import { Button } from '../components/ui/button';
 import { Label } from '../components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
 import { Textarea } from '../components/ui/textarea';
+import { Select } from '../components/ui/select';
 import { formatDate, formatWA } from '../utils/format';
 import { cn } from '../lib/utils';
 
@@ -26,11 +27,15 @@ import { cn } from '../lib/utils';
 
 const COLUMNS = [
   { id: 'todo', label: 'Todo' },
-  { id: 'in_progress', label: 'Sedang Diproses' },
-  { id: 'hold', label: 'Ditahan' },
+  { id: 'in_progress', label: 'Dikerjakan' },
   { id: 'done', label: 'Selesai' },
-  { id: 'archived', label: 'Diarsipkan' },
 ];
+
+const STATUS_CONFIG = {
+  todo: { label: 'Todo', className: 'bg-gray-100 text-gray-700 border-gray-300' },
+  in_progress: { label: 'Dikerjakan', className: 'bg-blue-50 text-blue-700 border-blue-300' },
+  done: { label: 'Selesai', className: 'bg-emerald-50 text-emerald-700 border-emerald-300' },
+};
 
 const CATEGORY_CONFIG = {
   bug: { label: 'Bug', className: 'bg-rose-50 text-rose-700 border-rose-200' },
@@ -92,7 +97,7 @@ function PriorityBadge({ priority }) {
 
 // ── Draggable Card ──
 
-function FeedbackCard({ item, isDraggable = false, isDragOverlay = false, onClick }) {
+function FeedbackCard({ item, isDraggable = false, isDragOverlay = false, onClick, onStatusChange, isSuperAdmin }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: item.id,
     disabled: !isDraggable,
@@ -101,6 +106,9 @@ function FeedbackCard({ item, isDraggable = false, isDragOverlay = false, onClic
   const style = transform
     ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
     : undefined;
+
+  const attachments = (() => { try { return JSON.parse(item.attachments || '[]'); } catch { return []; } })();
+  const isOverdue = item.due_date && item.status !== 'done' && new Date(item.due_date) < new Date();
 
   return (
     <div
@@ -121,17 +129,62 @@ function FeedbackCard({ item, isDraggable = false, isDragOverlay = false, onClic
         {item.priority && <PriorityBadge priority={item.priority} />}
       </div>
       <p className="text-sm text-text mb-2 line-clamp-2">{item.message}</p>
+
+      {/* Metadata indicators */}
+      {(item.due_date || item.assigned_to_name || attachments.length > 0) && (
+        <div className="flex items-center gap-2.5 mb-2 flex-wrap">
+          {item.due_date && (
+            <span className={cn('flex items-center gap-1 text-[11px]', isOverdue ? 'text-rose-600 font-medium' : 'text-text-3')}>
+              <Clock className="h-3 w-3" />
+              {new Date(item.due_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
+            </span>
+          )}
+          {item.assigned_to_name && (
+            <span className="text-[11px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full font-medium">
+              {item.assigned_to_name}
+            </span>
+          )}
+          {attachments.length > 0 && (
+            <span className="flex items-center gap-0.5 text-[11px] text-text-3">
+              <Paperclip className="h-3 w-3" />
+              {attachments.length}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="flex items-center justify-between text-xs text-text-3">
         <span>{item.name || 'Anonim'}</span>
         <span>{formatDate(item.created_at)}</span>
       </div>
+
+      {/* Quick status buttons */}
+      {isSuperAdmin && !isDragOverlay && (
+        <div className="flex gap-1 mt-2 pt-2 border-t border-border">
+          {COLUMNS.map((col) => (
+            <button
+              key={col.id}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); if (item.status !== col.id) onStatusChange(item.id, col.id); }}
+              className={cn(
+                'flex-1 text-[10px] font-medium py-1 rounded border transition-colors',
+                item.status === col.id
+                  ? STATUS_CONFIG[col.id].className
+                  : 'bg-white text-text-3 border-border hover:border-green hover:text-green'
+              )}
+            >
+              {col.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 // ── Droppable Column ──
 
-function KanbanColumn({ column, isSuperAdmin, onCardClick }) {
+function KanbanColumn({ column, isSuperAdmin, onCardClick, onStatusChange }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
 
   return (
@@ -154,7 +207,9 @@ function KanbanColumn({ column, isSuperAdmin, onCardClick }) {
             key={item.id}
             item={item}
             isDraggable={isSuperAdmin}
+            isSuperAdmin={isSuperAdmin}
             onClick={() => onCardClick(item)}
+            onStatusChange={onStatusChange}
           />
         ))}
         {column.items.length === 0 && (
@@ -167,13 +222,17 @@ function KanbanColumn({ column, isSuperAdmin, onCardClick }) {
 
 // ── Detail Dialog (fully editable for super_admin) ──
 
-function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate, onDelete }) {
+function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate, onDelete, admins }) {
   const { showToast } = useToast();
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef(null);
   const [editForm, setEditForm] = useState({});
 
   useEffect(() => {
     if (item) {
+      let attachments = [];
+      try { attachments = JSON.parse(item.attachments || '[]'); } catch { /* ignore */ }
       setEditForm({
         type: item.type || 'feedback',
         category: item.category,
@@ -182,12 +241,47 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
         wa_number: item.wa_number || '',
         priority: item.priority || '',
         status: item.status,
+        due_date: item.due_date || '',
+        assigned_to: item.assigned_to || '',
+        attachments,
       });
     }
   }, [item]);
 
   const updateField = (field, value) => {
     setEditForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleAttachmentUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    const current = editForm.attachments || [];
+    if (current.length + files.length > 5) {
+      showToast('Maksimal 5 lampiran', 'error');
+      return;
+    }
+    setUploading(true);
+    try {
+      const uploaded = [];
+      for (const file of files) {
+        if (file.size > 5 * 1024 * 1024) {
+          showToast(`${file.name} terlalu besar (maks 5MB)`, 'error');
+          continue;
+        }
+        const result = await uploadFile(file, 'feedback');
+        uploaded.push({ url: result.url, name: file.name, type: file.type });
+      }
+      updateField('attachments', [...current, ...uploaded]);
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const removeAttachment = (idx) => {
+    updateField('attachments', (editForm.attachments || []).filter((_, i) => i !== idx));
   };
 
   const handleSave = async () => {
@@ -205,6 +299,11 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
       if ((editForm.wa_number || null) !== (item.wa_number || null)) payload.wa_number = editForm.wa_number || null;
       if ((editForm.priority || null) !== (item.priority || null)) payload.priority = editForm.priority || null;
       if (editForm.status !== item.status) payload.status = editForm.status;
+      if ((editForm.due_date || null) !== (item.due_date || null)) payload.due_date = editForm.due_date || null;
+      if ((editForm.assigned_to || null) !== (item.assigned_to || null)) payload.assigned_to = editForm.assigned_to || null;
+
+      const origAttachments = (() => { try { return JSON.parse(item.attachments || '[]'); } catch { return []; } })();
+      if (JSON.stringify(editForm.attachments) !== JSON.stringify(origAttachments)) payload.attachments = editForm.attachments;
 
       if (Object.keys(payload).length === 0) {
         showToast('Tidak ada perubahan');
@@ -382,6 +481,100 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
             </div>
           )}
 
+          {/* Due Date */}
+          {isSuperAdmin ? (
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Tenggat Waktu</Label>
+              <input
+                type="datetime-local"
+                value={editForm.due_date || ''}
+                onChange={(e) => updateField('due_date', e.target.value)}
+                className="h-9 w-full px-3 text-sm border border-border rounded-sm bg-white focus:outline-none focus:ring-1 focus:ring-green"
+              />
+            </div>
+          ) : item.due_date ? (
+            <div className="text-sm">
+              <span className="text-text-3 text-xs block">Tenggat Waktu</span>
+              <span className="text-text">{formatDate(item.due_date)}</span>
+            </div>
+          ) : null}
+
+          {/* Assigned To */}
+          {isSuperAdmin ? (
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Ditugaskan ke</Label>
+              <Select value={editForm.assigned_to || ''} onChange={(e) => updateField('assigned_to', e.target.value)}>
+                <option value="">Belum ditugaskan</option>
+                {admins.map((a) => (
+                  <option key={a.id} value={a.id}>{a.name}</option>
+                ))}
+              </Select>
+            </div>
+          ) : item.assigned_to_name ? (
+            <div className="text-sm">
+              <span className="text-text-3 text-xs block">Ditugaskan ke</span>
+              <span className="text-blue-600 font-medium">{item.assigned_to_name}</span>
+            </div>
+          ) : null}
+
+          {/* Attachments */}
+          <div>
+            <Label className="text-xs text-text-3 mb-1.5 block">Lampiran</Label>
+            {(editForm.attachments || []).length > 0 && (
+              <div className="grid grid-cols-3 gap-2 mb-2">
+                {(editForm.attachments || []).map((att, idx) => (
+                  <div key={idx} className="relative group border border-border rounded-sm overflow-hidden">
+                    {att.type?.startsWith('image/') ? (
+                      <a href={att.url} target="_blank" rel="noopener noreferrer">
+                        <img src={att.url} alt={att.name} className="w-full h-20 object-cover" />
+                      </a>
+                    ) : (
+                      <a href={att.url} target="_blank" rel="noopener noreferrer" className="flex flex-col items-center justify-center h-20 bg-gray-50 hover:bg-gray-100 transition-colors">
+                        <FileText className="h-6 w-6 text-text-3 mb-1" />
+                        <span className="text-[10px] text-text-3 px-1 truncate w-full text-center">{att.name || 'PDF'}</span>
+                      </a>
+                    )}
+                    {isSuperAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(idx)}
+                        className="absolute top-1 right-1 bg-white/90 rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-rose-50"
+                      >
+                        <X className="h-3 w-3 text-rose-600" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {isSuperAdmin && (editForm.attachments || []).length < 5 && (
+              <div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,.pdf"
+                  multiple
+                  onChange={handleAttachmentUpload}
+                  className="hidden"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                >
+                  <Upload className="h-3.5 w-3.5 mr-1.5" />
+                  {uploading ? 'Mengupload...' : 'Upload Lampiran'}
+                </Button>
+                <p className="text-[11px] text-text-3 mt-1">Maks 5 file, 5MB/file (JPG, PNG, WebP, PDF)</p>
+              </div>
+            )}
+            {!isSuperAdmin && (editForm.attachments || []).length === 0 && (
+              <p className="text-sm text-text-2">Tidak ada lampiran</p>
+            )}
+          </div>
+
           {/* Status (super_admin editable) */}
           {isSuperAdmin && (
             <div>
@@ -445,11 +638,16 @@ export default function FeedbackPage() {
 
   // Create dialog state
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [form, setForm] = useState({ type: 'feedback', category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo' });
+  const [form, setForm] = useState({ type: 'feedback', category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo', due_date: '', assigned_to: '' });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
 
   const isSuperAdmin = admin?.role === 'super_admin';
+
+  const [admins, setAdmins] = useState([]);
+  useEffect(() => {
+    if (isSuperAdmin) getAdmins().then(setAdmins).catch(() => {});
+  }, [isSuperAdmin]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
@@ -551,8 +749,20 @@ export default function FeedbackPage() {
     }
   };
 
+  const handleQuickStatusChange = async (feedbackId, newStatus) => {
+    const prevItems = [...items];
+    setItems((prev) => prev.map((i) => (i.id === feedbackId ? { ...i, status: newStatus } : i)));
+    try {
+      await updateFeedback(feedbackId, { status: newStatus });
+      showToast('Status diperbarui');
+    } catch (err) {
+      setItems(prevItems);
+      showToast(err.message, 'error');
+    }
+  };
+
   const openCreateDialog = () => {
-    setForm({ type: 'feedback', category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo' });
+    setForm({ type: 'feedback', category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo', due_date: '', assigned_to: '' });
     setErrors({});
     setShowCreateDialog(true);
   };
@@ -572,6 +782,8 @@ export default function FeedbackPage() {
         wa_number: form.wa_number.trim() || null,
         priority: form.priority || null,
         status: form.status,
+        due_date: form.due_date || null,
+        assigned_to: form.assigned_to || null,
       });
       showToast(form.type === 'idea' ? 'Idea ditambahkan' : 'Feedback ditambahkan');
       setShowCreateDialog(false);
@@ -589,7 +801,7 @@ export default function FeedbackPage() {
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-border-2 rounded w-48" />
           <div className="flex gap-4 overflow-x-auto">
-            {Array.from({ length: 5 }).map((_, i) => (
+            {Array.from({ length: 3 }).map((_, i) => (
               <div key={i} className="flex-shrink-0 w-[260px] bg-border-2 rounded-sm h-[400px]" />
             ))}
           </div>
@@ -658,6 +870,7 @@ export default function FeedbackPage() {
               column={col}
               isSuperAdmin={isSuperAdmin}
               onCardClick={setSelectedItem}
+              onStatusChange={handleQuickStatusChange}
             />
           ))}
         </div>
@@ -677,6 +890,7 @@ export default function FeedbackPage() {
           isSuperAdmin={isSuperAdmin}
           onUpdate={handleItemUpdate}
           onDelete={handleDelete}
+          admins={admins}
         />
       )}
 
@@ -807,6 +1021,30 @@ export default function FeedbackPage() {
                 ))}
               </div>
             </div>
+
+            {/* Due Date (create) */}
+            <div>
+              <Label className="text-xs text-text-3 mb-1.5 block">Tenggat Waktu (opsional)</Label>
+              <input
+                type="datetime-local"
+                value={form.due_date}
+                onChange={(e) => setForm((f) => ({ ...f, due_date: e.target.value }))}
+                className="h-9 w-full px-3 text-sm border border-border rounded-sm bg-white focus:outline-none focus:ring-1 focus:ring-green"
+              />
+            </div>
+
+            {/* Assigned To (create) */}
+            {isSuperAdmin && admins.length > 0 && (
+              <div>
+                <Label className="text-xs text-text-3 mb-1.5 block">Ditugaskan ke (opsional)</Label>
+                <Select value={form.assigned_to} onChange={(e) => setForm((f) => ({ ...f, assigned_to: e.target.value }))}>
+                  <option value="">Belum ditugaskan</option>
+                  {admins.map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </Select>
+              </div>
+            )}
           </div>
 
           <DialogFooter>

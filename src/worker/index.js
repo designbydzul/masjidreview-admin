@@ -500,6 +500,16 @@ async function runMigrations(env) {
     await env.DB.prepare('INSERT INTO _migrations (version) VALUES (8)').run();
   }
 
+  // v9: Feedback Hub enhancements — add due_date, assigned_to, attachments; migrate hold/archived to todo
+  if (currentVersion < 9) {
+    try { await env.DB.prepare('ALTER TABLE feedback ADD COLUMN due_date TEXT').run(); } catch (e) { /* column may already exist */ }
+    try { await env.DB.prepare('ALTER TABLE feedback ADD COLUMN assigned_to TEXT').run(); } catch (e) { /* column may already exist */ }
+    try { await env.DB.prepare("ALTER TABLE feedback ADD COLUMN attachments TEXT DEFAULT '[]'").run(); } catch (e) { /* column may already exist */ }
+    // Migrate hold/archived → todo
+    await env.DB.prepare("UPDATE feedback SET status = 'todo' WHERE status IN ('hold', 'archived')").run();
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (9)').run();
+  }
+
   migrated = true;
 }
 
@@ -1137,10 +1147,11 @@ export default {
         const formData = await request.formData();
         const file = formData.get('file');
         if (!file || !file.size) return json({ error: 'No file provided' }, 400);
-        if (!file.type.startsWith('image/')) return json({ error: 'File must be an image' }, 400);
+        const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif', 'application/pdf'];
+        if (!allowedTypes.includes(file.type)) return json({ error: 'File harus berupa gambar atau PDF' }, 400);
         if (file.size > 5 * 1024 * 1024) return json({ error: 'Max file size is 5MB' }, 400);
 
-        const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif' };
+        const extMap = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'image/gif': 'gif', 'application/pdf': 'pdf' };
         const ext = extMap[file.type] || 'jpg';
         const prefix = formData.get('prefix') || 'masjid';
         const uuid = crypto.randomUUID();
@@ -1762,23 +1773,23 @@ export default {
         const status = url.searchParams.get('status');
         const type = url.searchParams.get('type');
 
-        let sql = 'SELECT * FROM feedback';
+        let sql = 'SELECT f.*, u.name as assigned_to_name FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id';
         const conditions = [];
         const params = [];
 
-        if (status && ['todo', 'in_progress', 'hold', 'done', 'archived'].includes(status)) {
-          conditions.push('status = ?');
+        if (status && ['todo', 'in_progress', 'done'].includes(status)) {
+          conditions.push('f.status = ?');
           params.push(status);
         }
         if (type && ['feedback', 'idea'].includes(type)) {
-          conditions.push('type = ?');
+          conditions.push('f.type = ?');
           params.push(type);
         }
         if (conditions.length > 0) {
           sql += ' WHERE ' + conditions.join(' AND ');
         }
 
-        sql += ' ORDER BY created_at DESC';
+        sql += ' ORDER BY f.created_at DESC';
 
         const stmt = params.length > 0
           ? env.DB.prepare(sql).bind(...params)
@@ -1803,16 +1814,18 @@ export default {
         if (!['feedback', 'idea'].includes(feedbackType)) return json({ error: 'Type tidak valid' }, 400);
 
         const feedbackStatus = status || 'todo';
-        if (!['todo', 'in_progress', 'hold', 'done', 'archived'].includes(feedbackStatus)) return json({ error: 'Status tidak valid' }, 400);
+        if (!['todo', 'in_progress', 'done'].includes(feedbackStatus)) return json({ error: 'Status tidak valid' }, 400);
 
         const id = crypto.randomUUID();
         const createdAt = new Date().toISOString();
 
         await env.DB.prepare(
-          'INSERT INTO feedback (id, type, category, message, name, wa_number, priority, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(id, feedbackType, category, message, name || null, wa_number || null, priority || null, feedbackStatus, createdAt).run();
+          'INSERT INTO feedback (id, type, category, message, name, wa_number, priority, status, due_date, assigned_to, attachments, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(id, feedbackType, category, message, name || null, wa_number || null, priority || null, feedbackStatus, body.due_date || null, body.assigned_to || null, JSON.stringify(body.attachments || []), createdAt).run();
 
-        const entry = await env.DB.prepare('SELECT * FROM feedback WHERE id = ?').bind(id).first();
+        const entry = await env.DB.prepare(
+          'SELECT f.*, u.name as assigned_to_name FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id WHERE f.id = ?'
+        ).bind(id).first();
         return json(entry, 201);
       }
 
@@ -1832,7 +1845,7 @@ export default {
         const vals = [];
 
         if (body.status !== undefined) {
-          if (!['todo', 'in_progress', 'hold', 'done', 'archived'].includes(body.status)) {
+          if (!['todo', 'in_progress', 'done'].includes(body.status)) {
             return json({ error: 'Status tidak valid' }, 400);
           }
           setClauses.push('status = ?');
@@ -1881,6 +1894,23 @@ export default {
           vals.push(body.wa_number || null);
         }
 
+        if (body.due_date !== undefined) {
+          setClauses.push('due_date = ?');
+          vals.push(body.due_date || null);
+        }
+
+        if (body.assigned_to !== undefined) {
+          setClauses.push('assigned_to = ?');
+          vals.push(body.assigned_to || null);
+        }
+
+        if (body.attachments !== undefined) {
+          if (!Array.isArray(body.attachments)) return json({ error: 'Attachments harus berupa array' }, 400);
+          if (body.attachments.length > 5) return json({ error: 'Maksimal 5 attachment' }, 400);
+          setClauses.push('attachments = ?');
+          vals.push(JSON.stringify(body.attachments));
+        }
+
         if (setClauses.length === 0) {
           return json({ error: 'Tidak ada data untuk diperbarui' }, 400);
         }
@@ -1890,7 +1920,9 @@ export default {
           'UPDATE feedback SET ' + setClauses.join(', ') + ' WHERE id = ?'
         ).bind(...vals).run();
 
-        const updated = await env.DB.prepare('SELECT * FROM feedback WHERE id = ?').bind(feedbackId).first();
+        const updated = await env.DB.prepare(
+          'SELECT f.*, u.name as assigned_to_name FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id WHERE f.id = ?'
+        ).bind(feedbackId).first();
         return json(updated);
       }
 
