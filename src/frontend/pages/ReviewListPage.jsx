@@ -51,6 +51,29 @@ export default function ReviewListPage() {
   const [loading, setLoading] = useState(true);
   const { search, debouncedSearch, filterValues, handleSearchChange, handleFilterChange } = useSearchFilter();
 
+  // Date range filter state
+  const [datePreset, setDatePreset] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const today = new Date().toISOString().split('T')[0];
+
+  const applyDatePreset = (key) => {
+    setDatePreset(key);
+    const now = new Date();
+    if (key === 'today') {
+      const d = now.toISOString().split('T')[0];
+      setDateFrom(d); setDateTo(d);
+    } else if (key === '7d') {
+      setDateTo(now.toISOString().split('T')[0]);
+      setDateFrom(new Date(now - 7 * 86400000).toISOString().split('T')[0]);
+    } else if (key === '30d') {
+      setDateTo(now.toISOString().split('T')[0]);
+      setDateFrom(new Date(now - 30 * 86400000).toISOString().split('T')[0]);
+    } else {
+      setDateFrom(''); setDateTo('');
+    }
+  };
+
   // Create review state
   const [showCreate, setShowCreate] = useState(false);
   const [masjids, setMasjids] = useState([]);
@@ -130,14 +153,17 @@ export default function ReviewListPage() {
       result = result.filter((r) => r.reviewer_name?.toLowerCase().includes(q) || r.masjid_name?.toLowerCase().includes(q));
     }
     if (filterValues.platform) result = result.filter((r) => r.source_platform === filterValues.platform);
+    if (filterValues.rating) result = result.filter((r) => String(r.rating) === filterValues.rating);
+    if (dateFrom) result = result.filter((r) => r.created_at >= dateFrom);
+    if (dateTo) result = result.filter((r) => r.created_at <= dateTo + 'T23:59:59');
     return result;
-  }, [reviews, filter, debouncedSearch, filterValues]);
+  }, [reviews, filter, debouncedSearch, filterValues, dateFrom, dateTo]);
 
   const { sortedData, sortConfig, requestSort } = useClientSort(filtered);
 
   const { currentPage, totalItems, pageSize, paginatedData, goToPage } = usePagination(
     sortedData,
-    [filter, debouncedSearch, filterValues, sortConfig]
+    [filter, debouncedSearch, filterValues, sortConfig, dateFrom, dateTo]
   );
 
   const counts = {
@@ -196,7 +222,16 @@ export default function ReviewListPage() {
   };
 
   const columns = [
-    { key: 'reviewer_name', label: 'Reviewer', sortable: true, render: (row) => <span className="font-medium">{row.reviewer_name || '-'}</span> },
+    { key: 'reviewer_name', label: 'Reviewer', sortable: true, render: (row) => (
+      <div className="flex items-center gap-1.5">
+        <span className="font-medium">{row.reviewer_name || '-'}</span>
+        {row.user_id ? (
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-green border border-emerald-200">User</span>
+        ) : (
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-gray-100 text-text-3 border border-gray-200">Tamu</span>
+        )}
+      </div>
+    ) },
     { key: 'masjid_name', label: 'Masjid', sortable: true, render: (row) => row.masjid_name || '-' },
     { key: 'rating', label: 'Rating', sortable: true, render: (row) => row.rating ? <span className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />{row.rating}</span> : '-' },
     { key: 'short_description', label: 'Testimoni', render: (row) => <ExpandableText text={row.short_description} /> },
@@ -228,7 +263,7 @@ export default function ReviewListPage() {
     },
   ];
 
-  if (loading) return <SkeletonTablePage columns={6} hasButton />;
+  if (loading) return <SkeletonTablePage columns={7} hasButton />;
 
   return (
     <div>
@@ -256,6 +291,17 @@ export default function ReviewListPage() {
             allLabel: `Semua Status (${counts.all})`,
           },
           { key: 'platform', label: 'Platform', options: platformOptions },
+          { key: 'rating', label: 'Rating', options: [
+            { value: '5', label: '⭐ 5' },
+            { value: '4.5', label: '⭐ 4.5' },
+            { value: '4', label: '⭐ 4' },
+            { value: '3.5', label: '⭐ 3.5' },
+            { value: '3', label: '⭐ 3' },
+            { value: '2.5', label: '⭐ 2.5' },
+            { value: '2', label: '⭐ 2' },
+            { value: '1.5', label: '⭐ 1.5' },
+            { value: '1', label: '⭐ 1' },
+          ] },
         ]}
         filterValues={{ ...filterValues, status: filter === 'all' ? '' : filter }}
         onFilterChange={(key, value) => {
@@ -267,6 +313,43 @@ export default function ReviewListPage() {
           }
         }}
       />
+
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {[
+          { key: 'all', label: 'Semua' },
+          { key: 'today', label: 'Hari Ini' },
+          { key: '7d', label: '7 Hari' },
+          { key: '30d', label: '30 Hari' },
+        ].map((p) => (
+          <Button
+            key={p.key}
+            type="button"
+            variant={datePreset === p.key ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => applyDatePreset(p.key)}
+          >
+            {p.label}
+          </Button>
+        ))}
+        <div className="flex items-center gap-1.5">
+          <input
+            type="date"
+            value={dateFrom}
+            max={dateTo || today}
+            onChange={(e) => { setDateFrom(e.target.value); setDatePreset('custom'); }}
+            className="h-8 px-2 text-sm border border-border rounded-sm bg-white focus:outline-none focus:ring-1 focus:ring-green"
+          />
+          <span className="text-text-2 text-sm">—</span>
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom}
+            max={today}
+            onChange={(e) => { setDateTo(e.target.value); setDatePreset('custom'); }}
+            className="h-8 px-2 text-sm border border-border rounded-sm bg-white focus:outline-none focus:ring-1 focus:ring-green"
+          />
+        </div>
+      </div>
 
       <BulkBar
         count={selectedIds.size}
