@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Star } from 'lucide-react';
-import { getUser, updateUser, forceLogout } from '../api';
+import { ArrowLeft, Star, Trash2 } from 'lucide-react';
+import { getUser, updateUser, forceLogout, deleteUser } from '../api';
+import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { useConfirm } from '../contexts/ConfirmContext';
 import DataTable from '../components/DataTable';
@@ -18,6 +19,7 @@ import { formatWA, formatDate, truncate } from '../utils/format';
 export default function UserDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { admin } = useAuth();
   const { showToast } = useToast();
   const { confirm } = useConfirm();
 
@@ -66,6 +68,23 @@ export default function UserDetailPage() {
     try {
       await forceLogout(id);
       showToast('User berhasil di-logout');
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleDelete = async () => {
+    const ok = await confirm({
+      title: 'Hapus User',
+      message: 'Apakah kamu yakin ingin menghapus user ini? Review yang sudah dibuat akan tetap tersimpan sebagai anonim. Tindakan ini tidak bisa dibatalkan.',
+      confirmLabel: 'Hapus',
+      confirmStyle: 'red',
+    });
+    if (!ok) return;
+    try {
+      await deleteUser(id);
+      showToast('User berhasil dihapus');
+      navigate('/users');
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -121,6 +140,18 @@ export default function UserDetailPage() {
       {/* Reviews */}
       <h2 className="font-heading text-base font-semibold text-text mb-3">Review oleh user ini ({reviews.length})</h2>
       <DataTable columns={reviewColumns} data={reviews} emptyIcon={Star} emptyText="Belum ada review" />
+
+      {/* Danger zone — super_admin only */}
+      {admin?.role === 'super_admin' && (
+        <div className="mt-8 border border-red/20 rounded-lg p-5">
+          <h2 className="font-heading text-base font-semibold text-red mb-1">Zona Berbahaya</h2>
+          <p className="text-text-2 text-sm mb-3">Tindakan ini bersifat permanen dan tidak dapat dibatalkan.</p>
+          <Button variant="destructive" size="sm" onClick={handleDelete}>
+            <Trash2 className="h-3.5 w-3.5 mr-1" />
+            Hapus User
+          </Button>
+        </div>
+      )}
 
       {/* Edit dialog */}
       <Dialog open={editModal} onOpenChange={setEditModal}>

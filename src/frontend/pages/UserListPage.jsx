@@ -33,6 +33,29 @@ export default function UserListPage() {
   const [loading, setLoading] = useState(true);
   const { search, debouncedSearch, filterValues, handleSearchChange, handleFilterChange } = useSearchFilter();
 
+  // Date range filter state
+  const [datePreset, setDatePreset] = useState('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const today = new Date().toISOString().split('T')[0];
+
+  const applyDatePreset = (key) => {
+    setDatePreset(key);
+    const now = new Date();
+    if (key === 'today') {
+      const d = now.toISOString().split('T')[0];
+      setDateFrom(d); setDateTo(d);
+    } else if (key === '7d') {
+      setDateTo(now.toISOString().split('T')[0]);
+      setDateFrom(new Date(now - 7 * 86400000).toISOString().split('T')[0]);
+    } else if (key === '30d') {
+      setDateTo(now.toISOString().split('T')[0]);
+      setDateFrom(new Date(now - 30 * 86400000).toISOString().split('T')[0]);
+    } else {
+      setDateFrom(''); setDateTo('');
+    }
+  };
+
   // Create user state
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState(emptyCreateForm);
@@ -61,14 +84,17 @@ export default function UserListPage() {
       result = result.filter((u) => u.name?.toLowerCase().includes(q) || u.wa_number?.includes(q));
     }
     if (filterValues.city) result = result.filter((u) => u.city === filterValues.city);
+    if (filterValues.age_range) result = result.filter((u) => u.age_range === filterValues.age_range);
+    if (dateFrom) result = result.filter((u) => u.created_at >= dateFrom);
+    if (dateTo) result = result.filter((u) => u.created_at <= dateTo + 'T23:59:59');
     return result;
-  }, [users, debouncedSearch, filterValues]);
+  }, [users, debouncedSearch, filterValues, dateFrom, dateTo]);
 
   const { sortedData, sortConfig, requestSort } = useClientSort(filteredUsers);
 
   const { currentPage, totalItems, pageSize, paginatedData, goToPage } = usePagination(
     sortedData,
-    [debouncedSearch, filterValues, sortConfig]
+    [debouncedSearch, filterValues, sortConfig, dateFrom, dateTo]
   );
 
   const handleOpenCreate = () => {
@@ -164,10 +190,57 @@ export default function UserListPage() {
         onSearchChange={handleSearchChange}
         filters={[
           { key: 'city', label: 'Kota', options: cityOptions },
+          { key: 'age_range', label: 'Usia', options: [
+            { value: '<15', label: '< 15' },
+            { value: '16-20', label: '16-20' },
+            { value: '21-25', label: '21-25' },
+            { value: '26-30', label: '26-30' },
+            { value: '31-40', label: '31-40' },
+            { value: '41-50', label: '41-50' },
+            { value: '50+', label: '50+' },
+          ] },
         ]}
         filterValues={filterValues}
         onFilterChange={handleFilterChange}
       />
+
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {[
+          { key: 'all', label: 'Semua' },
+          { key: 'today', label: 'Hari Ini' },
+          { key: '7d', label: '7 Hari' },
+          { key: '30d', label: '30 Hari' },
+        ].map((p) => (
+          <Button
+            key={p.key}
+            type="button"
+            variant={datePreset === p.key ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => applyDatePreset(p.key)}
+          >
+            {p.label}
+          </Button>
+        ))}
+        <div className="flex items-center gap-1.5">
+          <input
+            type="date"
+            value={dateFrom}
+            max={dateTo || today}
+            onChange={(e) => { setDateFrom(e.target.value); setDatePreset('custom'); }}
+            className="h-8 px-2 text-sm border border-border rounded-sm bg-white focus:outline-none focus:ring-1 focus:ring-green"
+          />
+          <span className="text-text-2 text-sm">—</span>
+          <input
+            type="date"
+            value={dateTo}
+            min={dateFrom}
+            max={today}
+            onChange={(e) => { setDateTo(e.target.value); setDatePreset('custom'); }}
+            className="h-8 px-2 text-sm border border-border rounded-sm bg-white focus:outline-none focus:ring-1 focus:ring-green"
+          />
+        </div>
+      </div>
+
       <DataTable
         columns={columns}
         data={paginatedData}

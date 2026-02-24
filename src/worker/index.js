@@ -1588,6 +1588,27 @@ export default {
           const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
           return json(updated);
         }
+
+        if (request.method === 'DELETE') {
+          if (admin.role !== 'super_admin') return json({ error: 'Hanya super_admin yang dapat menghapus user' }, 403);
+          if (userId === admin.id) return json({ error: 'Tidak bisa menghapus akun sendiri' }, 400);
+
+          const user = await env.DB.prepare('SELECT wa_number FROM users WHERE id = ?').bind(userId).first();
+          if (!user) return json({ error: 'User not found' }, 404);
+
+          // 1. Delete all sessions
+          await env.DB.prepare('DELETE FROM user_sessions WHERE user_id = ?').bind(userId).run();
+          // 2. Orphan reviews (set user_id = NULL)
+          await env.DB.prepare('UPDATE reviews SET user_id = NULL WHERE user_id = ?').bind(userId).run();
+          // 3. Orphan facility suggestions (clear submitted_by_wa)
+          await env.DB.prepare('UPDATE facility_suggestions SET submitted_by_wa = NULL WHERE submitted_by_wa = ?').bind(user.wa_number).run();
+          // 4. Orphan masjid submissions (clear submitted_by)
+          await env.DB.prepare('UPDATE masjid SET submitted_by = NULL WHERE submitted_by = ?').bind(userId).run();
+          // 5. Delete user
+          await env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId).run();
+
+          return json({ ok: true });
+        }
       }
 
       // ── GET /api/admins ──

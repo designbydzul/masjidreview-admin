@@ -56,6 +56,7 @@ export const searchUsers = (q) => apiFetch('/api/users/search?q=' + encodeURICom
 export const getUser = (id) => apiFetch('/api/users/' + id);
 export const updateUser = (id, data) => apiFetch('/api/users/' + id, { method: 'PUT', body: JSON.stringify(data) });
 export const forceLogout = (id) => apiFetch('/api/users/' + id + '/force-logout', { method: 'POST' });
+export const deleteUser = (id) => apiFetch('/api/users/' + id, { method: 'DELETE' });
 export const changeUserRole = (id, role) => apiFetch('/api/users/' + id + '/role', { method: 'PATCH', body: JSON.stringify({ role }) });
 
 // Admins
