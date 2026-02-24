@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, Building2, Star, Users, KeyRound, Settings, MessageSquare, ScrollText } from 'lucide-react';
+import { LayoutDashboard, Building2, Star, Users, KeyRound, Settings, MessageSquare, ScrollText, BarChart3 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { cn } from '../lib/utils';
 
@@ -8,6 +8,7 @@ const navItems = [
   { to: '/masjids', label: 'Masjid', icon: Building2 },
   { to: '/reviews', label: 'Reviews', icon: Star },
   { to: '/users', label: 'Users', icon: Users },
+  { to: '/analytics', label: 'Analitik', icon: BarChart3 },
   { to: '/admins', label: 'Admin', icon: KeyRound, superOnly: true },
   { to: '/fasilitas', label: 'Fasilitas', icon: Settings },
   { to: '/feedback', label: 'Feedback Hub', icon: MessageSquare },

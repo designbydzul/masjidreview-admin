@@ -76,6 +76,12 @@ function sessionCookie(token) {
   return `admin_session=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${maxAge}`;
 }
 
+function getDateRange(url) {
+  const from = url.searchParams.get('from') || new Date(Date.now() - 30 * 86400000).toISOString();
+  const to = url.searchParams.get('to') || new Date().toISOString();
+  return { from, to };
+}
+
 function clearCookie() {
   return 'admin_session=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0';
 }
@@ -1827,6 +1833,152 @@ export default {
 
         await env.DB.prepare('DELETE FROM feedback WHERE id = ?').bind(feedbackId).run();
         return json({ ok: true });
+      }
+
+      // ── GET /api/analytics/overview ──
+      if (pathname === '/api/analytics/overview' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const url = new URL(request.url);
+        const { from, to } = getDateRange(url);
+        const row = await env.DB.prepare(
+          `SELECT
+            SUM(CASE WHEN event_type = 'page_view' THEN 1 ELSE 0 END) as total_page_views,
+            COUNT(DISTINCT CASE WHEN event_type = 'page_view' THEN ip_hash END) as unique_visitors,
+            SUM(CASE WHEN event_type = 'review_submitted' THEN 1 ELSE 0 END) as total_reviews,
+            SUM(CASE WHEN event_type = 'masjid_submitted' THEN 1 ELSE 0 END) as total_masjids
+          FROM analytics_events WHERE created_at BETWEEN ? AND ?`
+        ).bind(from, to).first();
+        return json(row);
+      }
+
+      // ── GET /api/analytics/cta-summary ──
+      if (pathname === '/api/analytics/cta-summary' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const url = new URL(request.url);
+        const { from, to } = getDateRange(url);
+        const { results } = await env.DB.prepare(
+          `SELECT event_type, COUNT(*) as count FROM analytics_events
+          WHERE event_type IN ('cta_click_tulis_review','cta_click_tambah_masjid','ig_link_click','maps_link_click')
+            AND created_at BETWEEN ? AND ?
+          GROUP BY event_type`
+        ).bind(from, to).all();
+        return json(results);
+      }
+
+      // ── GET /api/analytics/filter-usage ──
+      if (pathname === '/api/analytics/filter-usage' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const url = new URL(request.url);
+        const { from, to } = getDateRange(url);
+        const { results: cities } = await env.DB.prepare(
+          `SELECT json_extract(event_data, '$.city') as name, COUNT(*) as count
+          FROM analytics_events
+          WHERE event_type = 'filter_city' AND created_at BETWEEN ? AND ?
+          GROUP BY name ORDER BY count DESC LIMIT 10`
+        ).bind(from, to).all();
+        const { results: preferences } = await env.DB.prepare(
+          `SELECT json_extract(event_data, '$.preference') as name, COUNT(*) as count
+          FROM analytics_events
+          WHERE event_type = 'filter_preference' AND created_at BETWEEN ? AND ?
+          GROUP BY name ORDER BY count DESC LIMIT 10`
+        ).bind(from, to).all();
+        return json({ cities, preferences });
+      }
+
+      // ── GET /api/analytics/conversions ──
+      if (pathname === '/api/analytics/conversions' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const url = new URL(request.url);
+        const { from, to } = getDateRange(url);
+        const { results } = await env.DB.prepare(
+          `SELECT event_type, COUNT(*) as count FROM analytics_events
+          WHERE event_type IN ('page_view','login_start','login_success','review_submitted')
+            AND created_at BETWEEN ? AND ?
+          GROUP BY event_type`
+        ).bind(from, to).all();
+        return json(results);
+      }
+
+      // ── GET /api/analytics/peak-hours ──
+      if (pathname === '/api/analytics/peak-hours' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const url = new URL(request.url);
+        const { from, to } = getDateRange(url);
+        const { results } = await env.DB.prepare(
+          `SELECT CAST(strftime('%H', created_at) AS INTEGER) as hour, COUNT(*) as count
+          FROM analytics_events WHERE created_at BETWEEN ? AND ?
+          GROUP BY hour ORDER BY hour`
+        ).bind(from, to).all();
+        return json(results);
+      }
+
+      // ── GET /api/analytics/city-traffic ──
+      if (pathname === '/api/analytics/city-traffic' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const url = new URL(request.url);
+        const { from, to } = getDateRange(url);
+        const { results } = await env.DB.prepare(
+          `SELECT json_extract(event_data, '$.city') as city, COUNT(*) as count
+          FROM analytics_events
+          WHERE event_type = 'filter_city' AND created_at BETWEEN ? AND ?
+          GROUP BY city ORDER BY count DESC`
+        ).bind(from, to).all();
+        return json(results);
+      }
+
+      // ── GET /api/analytics/top-pages ──
+      if (pathname === '/api/analytics/top-pages' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const url = new URL(request.url);
+        const { from, to } = getDateRange(url);
+        const { results } = await env.DB.prepare(
+          `SELECT page, COUNT(*) as count FROM analytics_events
+          WHERE event_type = 'page_view' AND created_at BETWEEN ? AND ? AND page IS NOT NULL
+          GROUP BY page ORDER BY count DESC LIMIT 20`
+        ).bind(from, to).all();
+        return json(results);
+      }
+
+      // ── GET /api/analytics/export ──
+      if (pathname === '/api/analytics/export' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const url = new URL(request.url);
+        const { from, to } = getDateRange(url);
+        const eventType = url.searchParams.get('event_type');
+
+        let sql = 'SELECT id, event_type, event_data, page, session_id, ip_hash, created_at FROM analytics_events WHERE created_at BETWEEN ? AND ?';
+        const params = [from, to];
+        if (eventType) {
+          sql += ' AND event_type = ?';
+          params.push(eventType);
+        }
+        sql += ' ORDER BY created_at DESC';
+
+        const { results } = await env.DB.prepare(sql).bind(...params).all();
+
+        const csvHeaders = 'id,event_type,event_data,page,session_id,ip_hash,created_at';
+        const csvRows = results.map(r =>
+          [r.id, r.event_type, '"' + (r.event_data || '').replace(/"/g, '""') + '"', r.page || '', r.session_id || '', r.ip_hash || '', r.created_at || ''].join(',')
+        );
+        const csv = csvHeaders + '\n' + csvRows.join('\n');
+
+        return new Response(csv, {
+          status: 200,
+          headers: {
+            ...getCorsHeaders(request),
+            ...SECURITY_HEADERS,
+            'Content-Type': 'text/csv; charset=utf-8',
+            'Content-Disposition': 'attachment; filename=analytics_export.csv',
+          },
+        });
       }
 
       // ── Serve HTML for all other routes ──

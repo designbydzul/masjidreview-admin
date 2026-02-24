@@ -17,6 +17,7 @@ import AdminListPage from './pages/AdminListPage';
 import SettingsPage from './pages/SettingsPage';
 import ChangelogPage from './pages/ChangelogPage';
 import FeedbackPage from './pages/FeedbackPage';
+import AnalyticsPage from './pages/AnalyticsPage';
 
 export default function App() {
   return (
@@ -43,6 +44,7 @@ export default function App() {
                 <Route path="users" element={<UserListPage />} />
                 <Route path="users/:id" element={<UserDetailPage />} />
                 <Route path="admins" element={<AdminListPage />} />
+                <Route path="analytics" element={<AnalyticsPage />} />
                 <Route path="fasilitas" element={<SettingsPage />} />
                 <Route path="feedback" element={<FeedbackPage />} />
                 <Route path="changelog" element={<ChangelogPage />} />

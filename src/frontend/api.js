@@ -100,3 +100,18 @@ export const getFeedback = (params = {}) => {
 export const createFeedback = (data) => apiFetch('/api/feedback', { method: 'POST', body: JSON.stringify(data) });
 export const updateFeedback = (id, data) => apiFetch('/api/feedback/' + id, { method: 'PATCH', body: JSON.stringify(data) });
 export const deleteFeedback = (id) => apiFetch('/api/feedback/' + id, { method: 'DELETE' });
+
+// Analytics
+const analyticsQs = (from, to) => '?from=' + encodeURIComponent(from) + '&to=' + encodeURIComponent(to);
+export const getAnalyticsOverview = (from, to) => apiFetch('/api/analytics/overview' + analyticsQs(from, to));
+export const getAnalyticsCtaSummary = (from, to) => apiFetch('/api/analytics/cta-summary' + analyticsQs(from, to));
+export const getAnalyticsFilterUsage = (from, to) => apiFetch('/api/analytics/filter-usage' + analyticsQs(from, to));
+export const getAnalyticsConversions = (from, to) => apiFetch('/api/analytics/conversions' + analyticsQs(from, to));
+export const getAnalyticsPeakHours = (from, to) => apiFetch('/api/analytics/peak-hours' + analyticsQs(from, to));
+export const getAnalyticsCityTraffic = (from, to) => apiFetch('/api/analytics/city-traffic' + analyticsQs(from, to));
+export const getAnalyticsTopPages = (from, to) => apiFetch('/api/analytics/top-pages' + analyticsQs(from, to));
+export const getAnalyticsExportUrl = (from, to, eventType) => {
+  let url = '/api/analytics/export' + analyticsQs(from, to);
+  if (eventType) url += '&event_type=' + encodeURIComponent(eventType);
+  return url;
+};
