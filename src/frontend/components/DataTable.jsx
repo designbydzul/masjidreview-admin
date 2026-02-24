@@ -1,7 +1,8 @@
 import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from './ui/table';
 import { Checkbox } from './ui/checkbox';
+import { cn } from '../lib/utils';
 
-export default function DataTable({ columns, data, selectable, selectedIds, onSelectionChange, emptyIcon: EmptyIcon, emptyText = 'Tidak ada data' }) {
+export default function DataTable({ columns, data, selectable, selectedIds, onSelectionChange, emptyIcon: EmptyIcon, emptyText = 'Tidak ada data', sortConfig, onSort }) {
   const allIds = data.map((row) => row.id);
   const allSelected = selectable && data.length > 0 && allIds.every((id) => selectedIds?.has(id));
   const someSelected = selectable && data.length > 0 && allIds.some((id) => selectedIds?.has(id)) && !allSelected;
@@ -45,7 +46,24 @@ export default function DataTable({ columns, data, selectable, selectedIds, onSe
             </TableHead>
           )}
           {columns.map((col) => (
-            <TableHead key={col.key}>{col.label}</TableHead>
+            <TableHead key={col.key}>
+              {col.sortable && onSort ? (
+                <button
+                  onClick={() => onSort(col.key)}
+                  className={cn(
+                    'flex items-center gap-1 uppercase text-[11px] font-semibold tracking-wider transition-colors',
+                    sortConfig?.key === col.key ? 'text-green' : 'text-text-3 hover:text-text-2'
+                  )}
+                >
+                  {col.label}
+                  {sortConfig?.key === col.key && (
+                    <span className="text-[9px]">{sortConfig.direction === 'asc' ? '▲' : '▼'}</span>
+                  )}
+                </button>
+              ) : (
+                col.label
+              )}
+            </TableHead>
           ))}
         </TableRow>
       </TableHeader>

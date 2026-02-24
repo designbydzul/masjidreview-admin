@@ -7,6 +7,7 @@ import DataTable from '../components/DataTable';
 import SearchFilter, { useSearchFilter } from '../components/SearchFilter';
 import Pagination from '../components/Pagination';
 import usePagination from '../hooks/usePagination';
+import useClientSort from '../hooks/useClientSort';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -63,9 +64,11 @@ export default function UserListPage() {
     return result;
   }, [users, debouncedSearch, filterValues]);
 
+  const { sortedData, sortConfig, requestSort } = useClientSort(filteredUsers);
+
   const { currentPage, totalItems, pageSize, paginatedData, goToPage } = usePagination(
-    filteredUsers,
-    [debouncedSearch, filterValues]
+    sortedData,
+    [debouncedSearch, filterValues, sortConfig]
   );
 
   const handleOpenCreate = () => {
@@ -90,7 +93,6 @@ export default function UserListPage() {
       if (!/^62\d{8,13}$/.test(normalized)) {
         errors.wa_number = 'Format nomor WA tidak valid (harus 628xxx, 10-15 digit)';
       } else {
-        // Client-side duplicate check
         const duplicate = users.find((u) => u.wa_number === normalized);
         if (duplicate) {
           errors.wa_number = 'Nomor WA sudah terdaftar';
@@ -116,7 +118,6 @@ export default function UserListPage() {
       setCreateForm(emptyCreateForm);
       loadData();
     } catch (err) {
-      // Backend duplicate check (safety net)
       if (err.message === 'Nomor WA sudah terdaftar') {
         setCreateErrors({ wa_number: err.message });
       } else {
@@ -128,13 +129,13 @@ export default function UserListPage() {
   };
 
   const columns = [
-    { key: 'name', label: 'Nama', render: (row) => <span className="font-medium">{row.name || '-'}</span> },
+    { key: 'name', label: 'Nama', sortable: true, render: (row) => <span className="font-medium">{row.name || '-'}</span> },
     { key: 'wa_number', label: 'WhatsApp', render: (row) => <span className="text-text-2">{formatWA(row.wa_number)}</span> },
     { key: 'email', label: 'Email', render: (row) => <span className="text-text-2 text-xs">{row.email || '-'}</span> },
-    { key: 'city', label: 'Kota', render: (row) => row.city || '-' },
-    { key: 'age_range', label: 'Usia', render: (row) => row.age_range || '-' },
-    { key: 'review_count', label: 'Reviews', render: (row) => <span className="font-heading font-medium">{row.review_count || 0}</span> },
-    { key: 'created_at', label: 'Bergabung', render: (row) => <span className="text-text-3 text-xs">{formatDate(row.created_at)}</span> },
+    { key: 'city', label: 'Kota', sortable: true, render: (row) => row.city || '-' },
+    { key: 'age_range', label: 'Usia', sortable: true, render: (row) => row.age_range || '-' },
+    { key: 'review_count', label: 'Reviews', sortable: true, render: (row) => <span className="font-heading font-medium">{row.review_count || 0}</span> },
+    { key: 'created_at', label: 'Bergabung', sortable: true, render: (row) => <span className="text-text-3 text-xs">{formatDate(row.created_at)}</span> },
     {
       key: 'actions',
       label: 'Aksi',
@@ -167,7 +168,14 @@ export default function UserListPage() {
         filterValues={filterValues}
         onFilterChange={handleFilterChange}
       />
-      <DataTable columns={columns} data={paginatedData} emptyIcon={Users} emptyText="Tidak ada user" />
+      <DataTable
+        columns={columns}
+        data={paginatedData}
+        emptyIcon={Users}
+        emptyText="Tidak ada user"
+        sortConfig={sortConfig}
+        onSort={requestSort}
+      />
 
       <Pagination
         currentPage={currentPage}

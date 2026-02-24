@@ -1,17 +1,18 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Building2, Plus, ImageIcon } from 'lucide-react';
+import { Building2, Plus, ImageIcon, Pencil, XCircle, Search as SearchIcon, Trash2 } from 'lucide-react';
 import { getMasjids, setMasjidStatus, bulkMasjidStatus, deleteMasjid, getSimilarMasjids } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { useConfirm } from '../contexts/ConfirmContext';
 import DataTable from '../components/DataTable';
-import FilterTabs from '../components/FilterTabs';
+import ActionMenu from '../components/ActionMenu';
 import BulkBar from '../components/BulkBar';
 import Badge from '../components/Badge';
 import SearchFilter, { useSearchFilter } from '../components/SearchFilter';
 import Pagination from '../components/Pagination';
 import usePagination from '../hooks/usePagination';
+import useClientSort from '../hooks/useClientSort';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { SkeletonTablePage } from '../components/Skeleton';
@@ -46,7 +47,6 @@ export default function MasjidListPage() {
 
   useEffect(() => { loadData(); }, []);
 
-  // Dynamic city options from loaded data
   const cityOptions = useMemo(() => {
     const cities = [...new Set(masjids.map((m) => m.city).filter(Boolean))].sort();
     return cities.map((c) => ({ value: c, label: c }));
@@ -63,9 +63,11 @@ export default function MasjidListPage() {
     return result;
   }, [masjids, filter, debouncedSearch, filterValues]);
 
+  const { sortedData, sortConfig, requestSort } = useClientSort(filtered);
+
   const { currentPage, totalItems, pageSize, paginatedData, goToPage } = usePagination(
-    filtered,
-    [filter, debouncedSearch, filterValues]
+    sortedData,
+    [filter, debouncedSearch, filterValues, sortConfig]
   );
 
   const counts = {
@@ -122,6 +124,21 @@ export default function MasjidListPage() {
     }
   };
 
+  const buildMenuItems = (row) => {
+    const items = [];
+    if (row.status === 'pending') {
+      items.push({ label: 'Edit', icon: Pencil, onClick: () => navigate(`/masjids/${row.id}/edit`) });
+    }
+    if (row.status === 'approved') {
+      items.push({ label: 'Reject', icon: XCircle, onClick: () => handleStatus(row.id, 'rejected') });
+    }
+    items.push({ label: 'Cek Duplikat', icon: SearchIcon, onClick: () => handleCheckSimilar(row.id) });
+    if (admin?.role === 'super_admin') {
+      items.push({ label: 'Hapus', icon: Trash2, onClick: () => handleDelete(row.id, row.name), destructive: true });
+    }
+    return items;
+  };
+
   const columns = [
     {
       key: 'photo_url',
@@ -130,31 +147,36 @@ export default function MasjidListPage() {
         ? <img src={row.photo_url} alt={row.name} className="w-10 h-10 rounded object-cover" />
         : <div className="w-10 h-10 rounded bg-bg-2 flex items-center justify-center"><ImageIcon className="h-4 w-4 text-text-3" /></div>,
     },
-    { key: 'name', label: 'Nama', render: (row) => <span className="font-medium">{row.name}</span> },
-    { key: 'city', label: 'Kota' },
-    { key: 'status', label: 'Status', render: (row) => <Badge status={row.status} /> },
+    { key: 'name', label: 'Nama', sortable: true, render: (row) => <span className="font-medium">{row.name}</span> },
+    { key: 'city', label: 'Kota', sortable: true },
+    { key: 'status', label: 'Status', sortable: true, render: (row) => <Badge status={row.status} /> },
     {
       key: 'actions',
       label: 'Aksi',
       render: (row) => (
-        <div className="flex gap-1.5 flex-wrap">
-          <Button variant="outline" size="sm" onClick={() => navigate(`/masjids/${row.id}/edit`)}>Edit</Button>
+        <div className="flex items-center gap-1.5">
           {row.status === 'pending' && (
             <>
               <Button size="sm" onClick={() => handleStatus(row.id, 'approved')}>Approve</Button>
               <Button variant="outline" size="sm" onClick={() => handleStatus(row.id, 'rejected')} className="hover:border-red hover:text-red">Reject</Button>
-              <Button size="sm" onClick={() => handleCheckSimilar(row.id)} className="bg-amber-50 text-amber-600 border border-amber-200 hover:opacity-80">Cek Duplikat</Button>
             </>
           )}
-          {admin?.role === 'super_admin' && (
-            <Button variant="outline" size="sm" onClick={() => handleDelete(row.id, row.name)} className="text-red hover:border-red">Hapus</Button>
+          {row.status === 'approved' && (
+            <Button variant="outline" size="sm" onClick={() => navigate(`/masjids/${row.id}/edit`)}>Edit</Button>
           )}
+          {row.status === 'rejected' && (
+            <>
+              <Button size="sm" onClick={() => handleStatus(row.id, 'approved')}>Approve</Button>
+              <Button variant="outline" size="sm" onClick={() => navigate(`/masjids/${row.id}/edit`)}>Edit</Button>
+            </>
+          )}
+          <ActionMenu items={buildMenuItems(row)} />
         </div>
       ),
     },
   ];
 
-  if (loading) return <SkeletonTablePage columns={5} hasFilterTabs hasButton />;
+  if (loading) return <SkeletonTablePage columns={5} hasButton />;
 
   return (
     <div>
@@ -166,26 +188,32 @@ export default function MasjidListPage() {
         </Button>
       </div>
 
-      <FilterTabs
-        tabs={[
-          { key: 'all', label: 'Semua', count: counts.all },
-          { key: 'approved', label: 'Approved', count: counts.approved },
-          { key: 'pending', label: 'Pending', count: counts.pending },
-          { key: 'rejected', label: 'Rejected', count: counts.rejected },
-        ]}
-        activeTab={filter}
-        onTabChange={(t) => { setFilter(t); setSelectedIds(new Set()); }}
-      />
-
       <SearchFilter
         searchPlaceholder="Cari nama masjid..."
         searchValue={search}
         onSearchChange={handleSearchChange}
         filters={[
+          {
+            key: 'status',
+            label: 'Status',
+            options: [
+              { value: 'approved', label: `Approved (${counts.approved})` },
+              { value: 'pending', label: `Pending (${counts.pending})` },
+              { value: 'rejected', label: `Rejected (${counts.rejected})` },
+            ],
+            allLabel: `Semua Status (${counts.all})`,
+          },
           { key: 'city', label: 'Kota', options: cityOptions },
         ]}
-        filterValues={filterValues}
-        onFilterChange={handleFilterChange}
+        filterValues={{ ...filterValues, status: filter === 'all' ? '' : filter }}
+        onFilterChange={(key, value) => {
+          if (key === 'status') {
+            setFilter(value || 'all');
+            setSelectedIds(new Set());
+          } else {
+            handleFilterChange(key, value);
+          }
+        }}
       />
 
       <BulkBar
@@ -202,6 +230,8 @@ export default function MasjidListPage() {
         onSelectionChange={setSelectedIds}
         emptyIcon={Building2}
         emptyText="Tidak ada masjid"
+        sortConfig={sortConfig}
+        onSort={requestSort}
       />
 
       <Pagination

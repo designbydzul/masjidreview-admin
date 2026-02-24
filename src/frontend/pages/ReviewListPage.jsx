@@ -1,18 +1,19 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Star, Plus } from 'lucide-react';
+import { Star, Plus, Pencil, XCircle, Trash2 } from 'lucide-react';
 import { getReviews, createReview, getMasjids, setReviewStatus, bulkReviewStatus, deleteReview } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { useConfirm } from '../contexts/ConfirmContext';
 import DataTable from '../components/DataTable';
-import FilterTabs from '../components/FilterTabs';
+import ActionMenu from '../components/ActionMenu';
 import BulkBar from '../components/BulkBar';
 import Badge from '../components/Badge';
 import ExpandableText from '../components/ExpandableText';
 import SearchFilter, { useSearchFilter } from '../components/SearchFilter';
 import Pagination from '../components/Pagination';
 import usePagination from '../hooks/usePagination';
+import useClientSort from '../hooks/useClientSort';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
@@ -132,9 +133,11 @@ export default function ReviewListPage() {
     return result;
   }, [reviews, filter, debouncedSearch, filterValues]);
 
+  const { sortedData, sortConfig, requestSort } = useClientSort(filtered);
+
   const { currentPage, totalItems, pageSize, paginatedData, goToPage } = usePagination(
-    filtered,
-    [filter, debouncedSearch, filterValues]
+    sortedData,
+    [filter, debouncedSearch, filterValues, sortConfig]
   );
 
   const counts = {
@@ -178,40 +181,54 @@ export default function ReviewListPage() {
     }
   };
 
+  const buildMenuItems = (row) => {
+    const items = [];
+    if (row.status === 'pending') {
+      items.push({ label: 'Edit', icon: Pencil, onClick: () => navigate(`/reviews/${row.id}/edit`) });
+    }
+    if (row.status === 'approved') {
+      items.push({ label: 'Reject', icon: XCircle, onClick: () => handleStatus(row.id, 'rejected') });
+    }
+    if (admin?.role === 'super_admin') {
+      items.push({ label: 'Hapus', icon: Trash2, onClick: () => handleDelete(row.id), destructive: true });
+    }
+    return items;
+  };
+
   const columns = [
-    { key: 'reviewer_name', label: 'Reviewer', render: (row) => <span className="font-medium">{row.reviewer_name || '-'}</span> },
-    { key: 'masjid_name', label: 'Masjid', render: (row) => row.masjid_name || '-' },
-    { key: 'rating', label: 'Rating', render: (row) => row.rating ? <span className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />{row.rating}</span> : '-' },
+    { key: 'reviewer_name', label: 'Reviewer', sortable: true, render: (row) => <span className="font-medium">{row.reviewer_name || '-'}</span> },
+    { key: 'masjid_name', label: 'Masjid', sortable: true, render: (row) => row.masjid_name || '-' },
+    { key: 'rating', label: 'Rating', sortable: true, render: (row) => row.rating ? <span className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />{row.rating}</span> : '-' },
     { key: 'short_description', label: 'Testimoni', render: (row) => <ExpandableText text={row.short_description} /> },
-    { key: 'status', label: 'Status', render: (row) => <Badge status={row.status} /> },
-    { key: 'created_at', label: 'Tanggal', render: (row) => <span className="text-text-3 text-xs">{formatDate(row.created_at)}</span> },
+    { key: 'status', label: 'Status', sortable: true, render: (row) => <Badge status={row.status} /> },
+    { key: 'created_at', label: 'Tanggal', sortable: true, render: (row) => <span className="text-text-3 text-xs">{formatDate(row.created_at)}</span> },
     {
       key: 'actions',
       label: 'Aksi',
       render: (row) => (
-        <div className="flex gap-1.5 flex-wrap">
-          <Button variant="outline" size="sm" onClick={() => navigate(`/reviews/${row.id}/edit`)}>Edit</Button>
+        <div className="flex items-center gap-1.5">
           {row.status === 'pending' && (
             <>
               <Button size="sm" onClick={() => handleStatus(row.id, 'approved')}>Approve</Button>
               <Button variant="outline" size="sm" onClick={() => handleStatus(row.id, 'rejected')} className="hover:border-red hover:text-red">Reject</Button>
             </>
           )}
-          {row.status === 'rejected' && (
-            <Button size="sm" onClick={() => handleStatus(row.id, 'approved')}>Approve</Button>
-          )}
           {row.status === 'approved' && (
-            <Button variant="outline" size="sm" onClick={() => handleStatus(row.id, 'rejected')} className="hover:border-red hover:text-red">Reject</Button>
+            <Button variant="outline" size="sm" onClick={() => navigate(`/reviews/${row.id}/edit`)}>Edit</Button>
           )}
-          {admin?.role === 'super_admin' && (
-            <Button variant="outline" size="sm" onClick={() => handleDelete(row.id)} className="text-red hover:border-red">Hapus</Button>
+          {row.status === 'rejected' && (
+            <>
+              <Button size="sm" onClick={() => handleStatus(row.id, 'approved')}>Approve</Button>
+              <Button variant="outline" size="sm" onClick={() => navigate(`/reviews/${row.id}/edit`)}>Edit</Button>
+            </>
           )}
+          <ActionMenu items={buildMenuItems(row)} />
         </div>
       ),
     },
   ];
 
-  if (loading) return <SkeletonTablePage columns={6} hasFilterTabs hasButton />;
+  if (loading) return <SkeletonTablePage columns={6} hasButton />;
 
   return (
     <div>
@@ -223,26 +240,32 @@ export default function ReviewListPage() {
         </Button>
       </div>
 
-      <FilterTabs
-        tabs={[
-          { key: 'all', label: 'Semua', count: counts.all },
-          { key: 'approved', label: 'Approved', count: counts.approved },
-          { key: 'pending', label: 'Pending', count: counts.pending },
-          { key: 'rejected', label: 'Rejected', count: counts.rejected },
-        ]}
-        activeTab={filter}
-        onTabChange={(t) => { setFilter(t); setSelectedIds(new Set()); }}
-      />
-
       <SearchFilter
         searchPlaceholder="Cari reviewer atau masjid..."
         searchValue={search}
         onSearchChange={handleSearchChange}
         filters={[
+          {
+            key: 'status',
+            label: 'Status',
+            options: [
+              { value: 'approved', label: `Approved (${counts.approved})` },
+              { value: 'pending', label: `Pending (${counts.pending})` },
+              { value: 'rejected', label: `Rejected (${counts.rejected})` },
+            ],
+            allLabel: `Semua Status (${counts.all})`,
+          },
           { key: 'platform', label: 'Platform', options: platformOptions },
         ]}
-        filterValues={filterValues}
-        onFilterChange={handleFilterChange}
+        filterValues={{ ...filterValues, status: filter === 'all' ? '' : filter }}
+        onFilterChange={(key, value) => {
+          if (key === 'status') {
+            setFilter(value || 'all');
+            setSelectedIds(new Set());
+          } else {
+            handleFilterChange(key, value);
+          }
+        }}
       />
 
       <BulkBar
@@ -259,6 +282,8 @@ export default function ReviewListPage() {
         onSelectionChange={setSelectedIds}
         emptyIcon={Star}
         emptyText="Tidak ada review"
+        sortConfig={sortConfig}
+        onSort={requestSort}
       />
 
       <Pagination
