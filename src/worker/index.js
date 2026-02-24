@@ -987,13 +987,17 @@ export default {
         const url = new URL(request.url);
         const status = url.searchParams.get('status');
 
-        let sql = 'SELECT * FROM masjid';
+        let sql = `SELECT m.*,
+          (SELECT COUNT(*) FROM facility_suggestions fs WHERE fs.masjid_id = m.id AND fs.status = 'pending') as pending_suggestions,
+          (SELECT COUNT(*) FROM analytics_events ae WHERE ae.event_type = 'page_view' AND ae.page = '/masjids/' || m.id AND ae.created_at > datetime('now', '-30 days')) as views_30d,
+          (SELECT COUNT(*) FROM reviews r WHERE r.masjid_id = m.id AND r.status = 'approved') as review_count
+        FROM masjid m`;
         const params = [];
         if (status) {
-          sql += ' WHERE status = ?';
+          sql += ' WHERE m.status = ?';
           params.push(status);
         }
-        sql += " ORDER BY CASE WHEN status='pending' THEN 0 ELSE 1 END, name ASC";
+        sql += " ORDER BY CASE WHEN m.status='pending' THEN 0 ELSE 1 END, m.name ASC";
 
         const stmt = params.length > 0
           ? env.DB.prepare(sql).bind(...params)

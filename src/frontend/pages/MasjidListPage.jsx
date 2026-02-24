@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { Building2, Plus, ImageIcon, Pencil, XCircle, Search as SearchIcon, Trash2 } from 'lucide-react';
+import { Building2, Plus, ImageIcon, Pencil, XCircle, Search as SearchIcon, Trash2, ExternalLink } from 'lucide-react';
 import { getMasjids, setMasjidStatus, bulkMasjidStatus, deleteMasjid, getSimilarMasjids } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -147,8 +147,52 @@ export default function MasjidListPage() {
         ? <img src={row.photo_url} alt={row.name} className="w-10 h-10 rounded object-cover" />
         : <div className="w-10 h-10 rounded bg-bg-2 flex items-center justify-center"><ImageIcon className="h-4 w-4 text-text-3" /></div>,
     },
-    { key: 'name', label: 'Nama', sortable: true, render: (row) => <span className="font-medium">{row.name}</span> },
+    {
+      key: 'name',
+      label: 'Nama',
+      sortable: true,
+      render: (row) => (
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => navigate(`/masjids/${row.id}/edit`)}
+            className="font-medium text-text hover:text-green hover:underline text-left"
+          >
+            {row.name}
+          </button>
+          <a
+            href={`https://masjidreview.id/masjids/${row.id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="text-text-3 hover:text-green shrink-0"
+            title="Buka halaman publik"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+          {row.pending_suggestions > 0 && (
+            <span
+              className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-[11px] font-semibold rounded-full bg-orange-100 text-orange-700 border border-orange-200 shrink-0"
+              title={`${row.pending_suggestions} saran fasilitas menunggu review`}
+            >
+              {row.pending_suggestions}
+            </span>
+          )}
+        </div>
+      ),
+    },
     { key: 'city', label: 'Kota', sortable: true },
+    {
+      key: 'views_30d',
+      label: 'Views',
+      sortable: true,
+      render: (row) => <span className="text-text-2 tabular-nums">{row.views_30d > 0 ? row.views_30d : '-'}</span>,
+    },
+    {
+      key: 'review_count',
+      label: 'Reviews',
+      sortable: true,
+      render: (row) => <span className="text-text-2 tabular-nums">{row.review_count > 0 ? row.review_count : '-'}</span>,
+    },
     { key: 'status', label: 'Status', sortable: true, render: (row) => <Badge status={row.status} /> },
     {
       key: 'actions',
@@ -176,7 +220,7 @@ export default function MasjidListPage() {
     },
   ];
 
-  if (loading) return <SkeletonTablePage columns={5} hasButton />;
+  if (loading) return <SkeletonTablePage columns={7} hasButton />;
 
   return (
     <div>
