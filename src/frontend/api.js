@@ -81,6 +81,8 @@ export const getFacilitySuggestions = (params = {}) => {
 };
 export const actionFacilitySuggestion = (id, action) =>
   apiFetch('/api/facility-suggestions/' + id, { method: 'PATCH', body: JSON.stringify({ action }) });
+export const bulkFacilitySuggestionStatus = (ids, status) =>
+  apiFetch('/api/facility-suggestions/bulk-status', { method: 'PATCH', body: JSON.stringify({ ids, status }) });
 
 // Changelog
 export const getChangelogs = (status) => apiFetch('/api/changelog' + (status ? '?status=' + status : ''));

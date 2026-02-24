@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { X, Plus, Check } from 'lucide-react';
-import { getMasjid, getMasjids, createMasjid, updateMasjid, getFacilities, getFacilitySuggestions, actionFacilitySuggestion } from '../api';
+import { getMasjid, getMasjids, createMasjid, updateMasjid, getFacilities, getFacilitySuggestions, actionFacilitySuggestion, bulkFacilitySuggestionStatus } from '../api';
 import { useToast } from '../contexts/ToastContext';
 import FormCard from '../components/FormCard';
+import BulkBar from '../components/BulkBar';
 import Badge from '../components/Badge';
+import { Checkbox } from '../components/ui/checkbox';
 import ToggleSwitch from '../components/ToggleSwitch';
 import PhotoUpload from '../components/PhotoUpload';
 import { Input } from '../components/ui/input';
@@ -46,6 +48,10 @@ export default function MasjidFormPage() {
   // Facility suggestions (edit mode only)
   const [suggestions, setSuggestions] = useState([]);
   const [sugFilter, setSugFilter] = useState('pending');
+  const [selectedSugIds, setSelectedSugIds] = useState(new Set());
+
+  // Coordinate extraction message
+  const [coordMsg, setCoordMsg] = useState('');
 
   useEffect(() => {
     const loadAll = async () => {
@@ -79,6 +85,26 @@ export default function MasjidFormPage() {
   }, [id]);
 
   const set = (key, val) => setForm((prev) => ({ ...prev, [key]: val }));
+
+  const handleMapsUrlChange = (value) => {
+    const atMatch = value.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+    const qMatch = value.match(/[?&]q=(-?\d+\.\d+),(-?\d+\.\d+)/);
+    const match = atMatch || qMatch;
+
+    if (match) {
+      setForm((prev) => ({ ...prev, google_maps_url: value, latitude: match[1], longitude: match[2] }));
+      setCoordMsg('Koordinat terdeteksi');
+      setTimeout(() => setCoordMsg(''), 3000);
+    } else {
+      set('google_maps_url', value);
+      if (value.includes('maps.app.goo.gl') || value.includes('goo.gl/maps')) {
+        setCoordMsg('Gunakan URL lengkap dari Google Maps untuk deteksi koordinat otomatis');
+        setTimeout(() => setCoordMsg(''), 5000);
+      } else {
+        setCoordMsg('');
+      }
+    }
+  };
 
   const setFacValue = (facId, value) => {
     setFacilityValues((prev) => ({ ...prev, [facId]: value }));
@@ -120,12 +146,32 @@ export default function MasjidFormPage() {
     }
   };
 
+  const handleBulkSuggestion = async (status) => {
+    try {
+      await bulkFacilitySuggestionStatus([...selectedSugIds], status);
+      showToast(`${selectedSugIds.size} saran di-${status === 'approved' ? 'setujui' : 'tolak'}`);
+      setSelectedSugIds(new Set());
+      await reloadSuggestions();
+      if (status === 'approved') {
+        const data = await getMasjid(id);
+        if (data.facilities) setFacilityValues(data.facilities);
+      }
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
   const pendingCount = useMemo(() => suggestions.filter((s) => s.status === 'pending').length, [suggestions]);
 
   const filteredSuggestions = useMemo(() => {
     if (sugFilter === 'all') return suggestions;
     return suggestions.filter((s) => s.status === sugFilter);
   }, [suggestions, sugFilter]);
+
+  const pendingSugIds = useMemo(
+    () => filteredSuggestions.filter((s) => s.status === 'pending').map((s) => s.id),
+    [filteredSuggestions]
+  );
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -222,6 +268,29 @@ export default function MasjidFormPage() {
 
       <form onSubmit={handleSave}>
         <FormCard title="Informasi Dasar">
+          {isEdit && (
+            <div className="mb-4 pb-4 border-b border-border/50">
+              <Label className="text-text-2">Diajukan Oleh</Label>
+              <p className="text-sm mt-1">
+                {form.submitted_by_name ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/users/${form.submitted_by}`)}
+                      className="text-green hover:underline font-medium"
+                    >
+                      {form.submitted_by_name}
+                    </button>
+                    {form.submitted_by_wa && (
+                      <span className="text-text-3 ml-2">({formatWA(form.submitted_by_wa)})</span>
+                    )}
+                  </>
+                ) : (
+                  <span className="text-text-3 italic">Admin / tidak diketahui</span>
+                )}
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <Label>Nama Masjid *</Label>
@@ -246,7 +315,12 @@ export default function MasjidFormPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
             <div>
               <Label>Google Maps URL</Label>
-              <Input value={form.google_maps_url || ''} onChange={(e) => set('google_maps_url', e.target.value)} />
+              <Input value={form.google_maps_url || ''} onChange={(e) => handleMapsUrlChange(e.target.value)} />
+              {coordMsg && (
+                <p className={`text-xs mt-1 ${coordMsg.startsWith('Koordinat') ? 'text-green' : 'text-amber-600'}`}>
+                  {coordMsg}
+                </p>
+              )}
             </div>
             <div>
               <Label>IG Post URL</Label>
@@ -328,28 +402,24 @@ export default function MasjidFormPage() {
               )}
             </span>
           }>
-            {/* Filter pills */}
-            <div className="flex gap-2 mb-4">
-              {[
-                { key: 'pending', label: 'Pending' },
-                { key: 'approved', label: 'Disetujui' },
-                { key: 'rejected', label: 'Ditolak' },
-                { key: 'all', label: 'Semua' },
-              ].map(({ key, label }) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setSugFilter(key)}
-                  className={`text-xs font-medium px-3 py-1.5 rounded-full border transition-colors ${
-                    sugFilter === key
-                      ? 'bg-green text-white border-green'
-                      : 'bg-white text-text-2 border-border hover:border-green'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+            <div className="mb-4">
+              <Select
+                value={sugFilter}
+                onChange={(e) => { setSugFilter(e.target.value); setSelectedSugIds(new Set()); }}
+                className="sm:w-[180px]"
+              >
+                <option value="pending">Pending</option>
+                <option value="approved">Disetujui</option>
+                <option value="rejected">Ditolak</option>
+                <option value="all">Semua</option>
+              </Select>
             </div>
+
+            <BulkBar
+              count={selectedSugIds.size}
+              onApprove={() => handleBulkSuggestion('approved')}
+              onReject={() => handleBulkSuggestion('rejected')}
+            />
 
             {filteredSuggestions.length === 0 ? (
               <p className="text-text-3 text-sm py-4 text-center">Tidak ada saran dengan status ini.</p>
@@ -358,6 +428,25 @@ export default function MasjidFormPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border text-left text-text-2">
+                      <th className="py-2 px-2 w-10">
+                        <Checkbox
+                          checked={
+                            pendingSugIds.length > 0 && pendingSugIds.every((sid) => selectedSugIds.has(sid))
+                              ? true
+                              : pendingSugIds.some((sid) => selectedSugIds.has(sid))
+                                ? 'indeterminate'
+                                : false
+                          }
+                          onCheckedChange={() => {
+                            if (pendingSugIds.every((sid) => selectedSugIds.has(sid))) {
+                              setSelectedSugIds(new Set());
+                            } else {
+                              setSelectedSugIds(new Set(pendingSugIds));
+                            }
+                          }}
+                          disabled={pendingSugIds.length === 0}
+                        />
+                      </th>
                       <th className="py-2 px-2 font-medium">Fasilitas</th>
                       <th className="py-2 px-2 font-medium">Nilai Saran</th>
                       <th className="py-2 px-2 font-medium">Diajukan Oleh</th>
@@ -369,6 +458,19 @@ export default function MasjidFormPage() {
                   <tbody>
                     {filteredSuggestions.map((sug) => (
                       <tr key={sug.id} className="border-b border-border/50 hover:bg-gray-50">
+                        <td className="py-2.5 px-2 w-10">
+                          {sug.status === 'pending' ? (
+                            <Checkbox
+                              checked={selectedSugIds.has(sug.id)}
+                              onCheckedChange={() => {
+                                const next = new Set(selectedSugIds);
+                                if (next.has(sug.id)) next.delete(sug.id);
+                                else next.add(sug.id);
+                                setSelectedSugIds(next);
+                              }}
+                            />
+                          ) : null}
+                        </td>
                         <td className="py-2.5 px-2 font-medium text-text">{sug.facility_name || <span className="text-text-3 italic">Lainnya</span>}</td>
                         <td className="py-2.5 px-2 text-text">{sug.suggested_value}</td>
                         <td className="py-2.5 px-2 text-text-2">{sug.submitted_by_wa ? formatWA(sug.submitted_by_wa) : '—'}</td>

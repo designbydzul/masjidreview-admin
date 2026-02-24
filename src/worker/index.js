@@ -492,6 +492,14 @@ async function runMigrations(env) {
     await env.DB.prepare('INSERT INTO _migrations (version) VALUES (7)').run();
   }
 
+  // v8: Add submitted_by column to masjid table for tracking who submitted
+  if (currentVersion < 8) {
+    try {
+      await env.DB.prepare('ALTER TABLE masjid ADD COLUMN submitted_by TEXT').run();
+    } catch (e) { /* column may already exist */ }
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (8)').run();
+  }
+
   migrated = true;
 }
 
@@ -947,6 +955,43 @@ export default {
         return json(results);
       }
 
+      // ── PATCH /api/facility-suggestions/bulk-status ──
+      if (pathname === '/api/facility-suggestions/bulk-status' && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const body = await request.json();
+        const ids = body.ids;
+        const status = body.status;
+
+        if (!Array.isArray(ids) || ids.length === 0 || ids.length > 50) {
+          return json({ error: 'ids must be an array of 1-50 items' }, 400);
+        }
+        if (!status || !['approved', 'rejected'].includes(status)) {
+          return json({ error: 'Status harus approved atau rejected' }, 400);
+        }
+
+        const placeholders = ids.map(() => '?').join(',');
+        const { results: suggestions } = await env.DB.prepare(
+          `SELECT * FROM facility_suggestions WHERE id IN (${placeholders})`
+        ).bind(...ids).all();
+
+        for (const sug of suggestions) {
+          if (status === 'rejected') {
+            await env.DB.prepare("UPDATE facility_suggestions SET status = 'rejected' WHERE id = ?").bind(sug.id).run();
+          } else {
+            await env.DB.prepare("UPDATE facility_suggestions SET status = 'approved' WHERE id = ?").bind(sug.id).run();
+            if (sug.facility_id) {
+              await env.DB.prepare(
+                "INSERT INTO masjid_facilities (id, masjid_id, facility_id, value) VALUES (?, ?, ?, ?) ON CONFLICT(masjid_id, facility_id) DO UPDATE SET value = excluded.value"
+              ).bind(crypto.randomUUID(), sug.masjid_id, sug.facility_id, sug.suggested_value).run();
+            }
+          }
+        }
+
+        return json({ ok: true, updated: suggestions.length });
+      }
+
       // ── PATCH /api/facility-suggestions/:id ──
       const facSugMatch = pathname.match(/^\/api\/facility-suggestions\/([^/]+)$/);
       if (facSugMatch && request.method === 'PATCH') {
@@ -1157,7 +1202,9 @@ export default {
 
         // GET single
         if (request.method === 'GET') {
-          const row = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(masjidId).first();
+          const row = await env.DB.prepare(
+            'SELECT m.*, u.name as submitted_by_name, u.wa_number as submitted_by_wa FROM masjid m LEFT JOIN users u ON m.submitted_by = u.id WHERE m.id = ?'
+          ).bind(masjidId).first();
           if (!row) return json({ error: 'Masjid not found' }, 404);
 
           // Attach dynamic facilities
