@@ -49,3 +49,11 @@ body {
   background: #d1d5db;
   border-radius: 3px;
 }
+
+/* Sidebar transitions */
+.sidebar-transition {
+  transition: width 200ms ease-in-out;
+}
+.sidebar-slide {
+  transition: transform 200ms ease-in-out;
+}
