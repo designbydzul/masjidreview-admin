@@ -61,7 +61,6 @@ export default function PhotoUpload({ value, onChange, prefix = 'masjid', resolv
           src={resolveUrl ? resolveUrl(value) : value}
           alt="Preview"
           className="w-20 h-20 object-cover rounded-sm border border-border"
-          onError={(e) => { e.target.style.display = 'none'; }}
         />
       )}
     </div>
