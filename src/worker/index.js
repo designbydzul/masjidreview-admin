@@ -549,6 +549,24 @@ async function runMigrations(env) {
     await env.DB.prepare('INSERT INTO _migrations (version) VALUES (10)').run();
   }
 
+  // v11: Facility corrections — add pending columns to masjid_facilities + facility_notes table
+  if (currentVersion < 11) {
+    try { await env.DB.prepare('ALTER TABLE masjid_facilities ADD COLUMN pending_value TEXT').run(); } catch (e) { /* column may exist */ }
+    try { await env.DB.prepare('ALTER TABLE masjid_facilities ADD COLUMN pending_submitted_by TEXT').run(); } catch (e) { /* column may exist */ }
+    try { await env.DB.prepare('ALTER TABLE masjid_facilities ADD COLUMN pending_created_at TEXT').run(); } catch (e) { /* column may exist */ }
+
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS facility_notes (
+      id TEXT PRIMARY KEY,
+      masjid_id TEXT NOT NULL REFERENCES masjid(id) ON DELETE CASCADE,
+      text TEXT NOT NULL,
+      submitted_by TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )`).run();
+    await env.DB.prepare('CREATE INDEX IF NOT EXISTS idx_facility_notes_masjid ON facility_notes(masjid_id)').run();
+
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (11)').run();
+  }
+
   migrated = true;
 }
 
@@ -1084,7 +1102,7 @@ export default {
         const status = url.searchParams.get('status');
 
         let sql = `SELECT m.*,
-          (SELECT COUNT(*) FROM facility_suggestions fs WHERE fs.masjid_id = m.id AND fs.status = 'pending') as pending_suggestions,
+          (SELECT COUNT(*) FROM masjid_facilities mf2 WHERE mf2.masjid_id = m.id AND mf2.pending_value IS NOT NULL) as pending_corrections,
           (SELECT COUNT(*) FROM analytics_events ae WHERE ae.event_type = 'page_view' AND ae.page = '/masjids/' || m.id AND ae.created_at > datetime('now', '-30 days')) as views_30d,
           (SELECT COUNT(*) FROM reviews r WHERE r.masjid_id = m.id AND r.status = 'approved') as review_count
         FROM masjid m`;
@@ -1248,6 +1266,57 @@ export default {
         return json(updated);
       }
 
+      // ── PATCH /api/masjids/:id/facility-corrections ──
+      const facCorrMatch = pathname.match(/^\/api\/masjids\/([^/]+)\/facility-corrections$/);
+      if (facCorrMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const masjidId = facCorrMatch[1];
+        const body = await request.json();
+
+        if (!body.action || !['accept_all', 'reject_all'].includes(body.action)) {
+          return json({ error: 'action harus accept_all atau reject_all' }, 400);
+        }
+
+        const { results: pending } = await env.DB.prepare(
+          'SELECT facility_id, pending_value, value FROM masjid_facilities WHERE masjid_id = ? AND pending_value IS NOT NULL'
+        ).bind(masjidId).all();
+
+        if (pending.length === 0) {
+          return json({ error: 'Tidak ada koreksi pending' }, 404);
+        }
+
+        const beforeData = pending.map(p => ({ facility_id: p.facility_id, old_value: p.value, pending_value: p.pending_value }));
+
+        if (body.action === 'accept_all') {
+          const batch = pending.map(p =>
+            env.DB.prepare('UPDATE masjid_facilities SET value = pending_value, pending_value = NULL, pending_submitted_by = NULL, pending_created_at = NULL WHERE masjid_id = ? AND facility_id = ?').bind(masjidId, p.facility_id)
+          );
+          await env.DB.batch(batch);
+        } else {
+          await env.DB.prepare(
+            'UPDATE masjid_facilities SET pending_value = NULL, pending_submitted_by = NULL, pending_created_at = NULL WHERE masjid_id = ? AND pending_value IS NOT NULL'
+          ).bind(masjidId).run();
+        }
+
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: body.action === 'accept_all' ? 'facility_corrections_accept' : 'facility_corrections_reject', resourceType: 'masjid', resourceId: masjidId, resourceName: null, beforeData: { corrections: beforeData }, afterData: { action: body.action, count: pending.length } });
+        return json({ ok: true, updated: pending.length });
+      }
+
+      // ── GET /api/masjids/:id/facility-notes ──
+      const facNotesMatch = pathname.match(/^\/api\/masjids\/([^/]+)\/facility-notes$/);
+      if (facNotesMatch && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const masjidId = facNotesMatch[1];
+        const { results } = await env.DB.prepare(
+          'SELECT * FROM facility_notes WHERE masjid_id = ? ORDER BY created_at DESC'
+        ).bind(masjidId).all();
+        return json(results);
+      }
+
       // ── /api/masjids/:id (GET, PUT, DELETE) ──
       const masjidIdMatch = pathname.match(/^\/api\/masjids\/([^/]+)$/);
       if (masjidIdMatch) {
@@ -1263,13 +1332,21 @@ export default {
           ).bind(masjidId).first();
           if (!row) return json({ error: 'Masjid not found' }, 404);
 
-          // Attach dynamic facilities
+          // Attach dynamic facilities + pending corrections
           const { results: facRows } = await env.DB.prepare(
-            'SELECT mf.facility_id, mf.value FROM masjid_facilities mf WHERE mf.masjid_id = ?'
+            'SELECT mf.facility_id, mf.value, mf.pending_value, mf.pending_submitted_by, mf.pending_created_at FROM masjid_facilities mf WHERE mf.masjid_id = ?'
           ).bind(masjidId).all();
           row.facilities = {};
+          row.pending_corrections = {};
           for (const f of facRows) {
             row.facilities[f.facility_id] = f.value;
+            if (f.pending_value !== null && f.pending_value !== undefined) {
+              row.pending_corrections[f.facility_id] = {
+                pending_value: f.pending_value,
+                submitted_by: f.pending_submitted_by,
+                created_at: f.pending_created_at,
+              };
+            }
           }
 
           return json(row);

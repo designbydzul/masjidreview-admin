@@ -4,7 +4,7 @@ import { uploadFile } from '../api';
 import { Input } from './ui/input';
 import { Button } from './ui/button';
 
-export default function PhotoUpload({ value, onChange, prefix = 'masjid' }) {
+export default function PhotoUpload({ value, onChange, prefix = 'masjid', resolveUrl }) {
   const fileRef = useRef(null);
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState(null); // { type: 'success'|'error', message }
@@ -58,7 +58,7 @@ export default function PhotoUpload({ value, onChange, prefix = 'masjid' }) {
       )}
       {value && (
         <img
-          src={value}
+          src={resolveUrl ? resolveUrl(value) : value}
           alt="Preview"
           className="w-20 h-20 object-cover rounded-sm border border-border"
           onError={(e) => { e.target.style.display = 'none'; }}

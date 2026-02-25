@@ -151,34 +151,49 @@ export default function MasjidListPage() {
       key: 'name',
       label: 'Nama',
       sortable: true,
-      render: (row) => (
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => navigate(`/masjids/${row.id}/edit`)}
-            className="font-medium text-text hover:text-green hover:underline text-left"
-          >
-            {row.name}
-          </button>
-          <a
-            href={`https://masjidreview.id/masjids/${row.id}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            className="text-text-3 hover:text-green shrink-0"
-            title="Buka halaman publik"
-          >
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-          {row.pending_suggestions > 0 && (
-            <span
-              className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-[11px] font-semibold rounded-full bg-orange-100 text-orange-700 border border-orange-200 shrink-0"
-              title={`${row.pending_suggestions} saran fasilitas menunggu review`}
-            >
-              {row.pending_suggestions}
-            </span>
-          )}
-        </div>
-      ),
+      render: (row) => {
+        const missing = [];
+        if (!row.address) missing.push('Alamat');
+        if (!row.photo_url) missing.push('Foto');
+        if (!row.google_maps_url) missing.push('Google Maps');
+        if (!row.latitude && !row.longitude) missing.push('Koordinat');
+
+        return (
+          <div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => navigate(`/masjids/${row.id}/edit`)}
+                className="font-medium text-text hover:text-green hover:underline text-left"
+              >
+                {row.name}
+              </button>
+              <a
+                href={`https://masjidreview.id/masjids/${row.id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="text-text-3 hover:text-green shrink-0"
+                title="Buka halaman publik"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </a>
+              {row.pending_corrections > 0 && (
+                <span
+                  className="inline-flex items-center justify-center min-w-[20px] h-5 px-1.5 text-[11px] font-semibold rounded-full bg-orange-100 text-orange-700 border border-orange-200 shrink-0"
+                  title={`${row.pending_corrections} koreksi fasilitas menunggu review`}
+                >
+                  {row.pending_corrections}
+                </span>
+              )}
+            </div>
+            {missing.length > 0 && (
+              <p className="text-[11px] text-amber-600 mt-0.5">
+                Belum lengkap: {missing.join(', ')}
+              </p>
+            )}
+          </div>
+        );
+      },
     },
     { key: 'city', label: 'Kota', sortable: true },
     {
@@ -270,6 +285,7 @@ export default function MasjidListPage() {
         columns={columns}
         data={paginatedData}
         selectable
+        selectableFilter={(row) => row.status === 'pending'}
         selectedIds={selectedIds}
         onSelectionChange={setSelectedIds}
         emptyIcon={Building2}

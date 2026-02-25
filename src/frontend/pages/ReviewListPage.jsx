@@ -361,6 +361,7 @@ export default function ReviewListPage() {
         columns={columns}
         data={paginatedData}
         selectable
+        selectableFilter={(row) => row.status === 'pending'}
         selectedIds={selectedIds}
         onSelectionChange={setSelectedIds}
         emptyIcon={Star}

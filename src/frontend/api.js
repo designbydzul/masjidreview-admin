@@ -75,15 +75,11 @@ export const updateFacility = (id, data) => apiFetch('/api/facilities/' + id, { 
 export const deleteFacility = (id) => apiFetch('/api/facilities/' + id, { method: 'DELETE' });
 export const toggleFacility = (id) => apiFetch('/api/facilities/' + id + '/toggle', { method: 'PATCH' });
 
-// Facility Suggestions
-export const getFacilitySuggestions = (params = {}) => {
-  const qs = new URLSearchParams(params).toString();
-  return apiFetch('/api/facility-suggestions' + (qs ? '?' + qs : ''));
-};
-export const actionFacilitySuggestion = (id, action) =>
-  apiFetch('/api/facility-suggestions/' + id, { method: 'PATCH', body: JSON.stringify({ action }) });
-export const bulkFacilitySuggestionStatus = (ids, status) =>
-  apiFetch('/api/facility-suggestions/bulk-status', { method: 'PATCH', body: JSON.stringify({ ids, status }) });
+// Facility Corrections & Notes
+export const handleFacilityCorrections = (masjidId, action) =>
+  apiFetch('/api/masjids/' + masjidId + '/facility-corrections', { method: 'PATCH', body: JSON.stringify({ action }) });
+export const getFacilityNotes = (masjidId) =>
+  apiFetch('/api/masjids/' + masjidId + '/facility-notes');
 
 // Changelog
 export const getChangelogs = (status) => apiFetch('/api/changelog' + (status ? '?status=' + status : ''));

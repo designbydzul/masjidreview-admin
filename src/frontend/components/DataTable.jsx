@@ -2,16 +2,18 @@ import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell } from '.
 import { Checkbox } from './ui/checkbox';
 import { cn } from '../lib/utils';
 
-export default function DataTable({ columns, data, selectable, selectedIds, onSelectionChange, emptyIcon: EmptyIcon, emptyText = 'Tidak ada data', sortConfig, onSort }) {
-  const allIds = data.map((row) => row.id);
-  const allSelected = selectable && data.length > 0 && allIds.every((id) => selectedIds?.has(id));
-  const someSelected = selectable && data.length > 0 && allIds.some((id) => selectedIds?.has(id)) && !allSelected;
+export default function DataTable({ columns, data, selectable, selectableFilter, selectedIds, onSelectionChange, emptyIcon: EmptyIcon, emptyText = 'Tidak ada data', sortConfig, onSort }) {
+  const selectableIds = selectable
+    ? data.filter((row) => !selectableFilter || selectableFilter(row)).map((row) => row.id)
+    : [];
+  const allSelected = selectable && selectableIds.length > 0 && selectableIds.every((id) => selectedIds?.has(id));
+  const someSelected = selectable && selectableIds.length > 0 && selectableIds.some((id) => selectedIds?.has(id)) && !allSelected;
 
   const toggleAll = () => {
     if (allSelected || someSelected) {
       onSelectionChange?.(new Set());
     } else {
-      onSelectionChange?.(new Set(allIds));
+      onSelectionChange?.(new Set(selectableIds));
     }
   };
 
@@ -42,6 +44,7 @@ export default function DataTable({ columns, data, selectable, selectedIds, onSe
               <Checkbox
                 checked={allSelected ? true : someSelected ? 'indeterminate' : false}
                 onCheckedChange={toggleAll}
+                disabled={selectableIds.length === 0}
               />
             </TableHead>
           )}
@@ -68,23 +71,30 @@ export default function DataTable({ columns, data, selectable, selectedIds, onSe
         </TableRow>
       </TableHeader>
       <TableBody>
-        {data.map((row) => (
-          <TableRow key={row.id}>
-            {selectable && (
-              <TableCell className="w-10 px-3">
-                <Checkbox
-                  checked={selectedIds?.has(row.id) || false}
-                  onCheckedChange={() => toggleOne(row.id)}
-                />
-              </TableCell>
-            )}
-            {columns.map((col) => (
-              <TableCell key={col.key}>
-                {col.render ? col.render(row) : row[col.key]}
-              </TableCell>
-            ))}
-          </TableRow>
-        ))}
+        {data.map((row) => {
+          const isSelectable = !selectableFilter || selectableFilter(row);
+          return (
+            <TableRow key={row.id}>
+              {selectable && (
+                <TableCell className="w-10 px-3">
+                  {isSelectable ? (
+                    <Checkbox
+                      checked={selectedIds?.has(row.id) || false}
+                      onCheckedChange={() => toggleOne(row.id)}
+                    />
+                  ) : (
+                    <Checkbox checked={false} disabled />
+                  )}
+                </TableCell>
+              )}
+              {columns.map((col) => (
+                <TableCell key={col.key}>
+                  {col.render ? col.render(row) : row[col.key]}
+                </TableCell>
+              ))}
+            </TableRow>
+          );
+        })}
       </TableBody>
     </Table>
   );

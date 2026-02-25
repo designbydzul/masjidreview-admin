@@ -1,12 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { X, Plus, Check } from 'lucide-react';
-import { getMasjid, getMasjids, createMasjid, updateMasjid, getFacilities, getFacilitySuggestions, actionFacilitySuggestion, bulkFacilitySuggestionStatus } from '../api';
+import { X, Plus, Check, AlertTriangle } from 'lucide-react';
+import { getMasjid, getMasjids, createMasjid, updateMasjid, setMasjidStatus, getFacilities, handleFacilityCorrections, getFacilityNotes } from '../api';
 import { useToast } from '../contexts/ToastContext';
 import FormCard from '../components/FormCard';
-import BulkBar from '../components/BulkBar';
-import Badge from '../components/Badge';
-import { Checkbox } from '../components/ui/checkbox';
 import ToggleSwitch from '../components/ToggleSwitch';
 import PhotoUpload from '../components/PhotoUpload';
 import { Input } from '../components/ui/input';
@@ -27,6 +24,12 @@ const emptyForm = {
   info_label: '', info_photos: '[]',
 };
 
+const resolvePhotoUrl = (url) => {
+  if (!url) return url;
+  if (url.startsWith('/images/')) return 'https://masjidreview.id' + url;
+  return url;
+};
+
 export default function MasjidFormPage() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -45,10 +48,10 @@ export default function MasjidFormPage() {
   const [facilities, setFacilities] = useState([]);
   const [facilityValues, setFacilityValues] = useState({});
 
-  // Facility suggestions (edit mode only)
-  const [suggestions, setSuggestions] = useState([]);
-  const [sugFilter, setSugFilter] = useState('pending');
-  const [selectedSugIds, setSelectedSugIds] = useState(new Set());
+  // Pending corrections & notes (edit mode only)
+  const [pendingCorrections, setPendingCorrections] = useState({});
+  const [facilityNotes, setFacilityNotes] = useState([]);
+  const [correctionsLoading, setCorrectionsLoading] = useState(false);
 
   // Coordinate extraction message
   const [coordMsg, setCoordMsg] = useState('');
@@ -65,15 +68,16 @@ export default function MasjidFormPage() {
           const data = await getMasjid(id);
           setForm(data);
           if (data.facilities) setFacilityValues(data.facilities);
+          if (data.pending_corrections) setPendingCorrections(data.pending_corrections);
           try {
             const photos = JSON.parse(data.info_photos || '[]');
             setInfoPhotos(photos.length > 0 ? photos : ['']);
           } catch { setInfoPhotos(['']); }
-          // Load facility suggestions
+          // Load facility notes
           try {
-            const sugs = await getFacilitySuggestions({ masjid_id: id });
-            setSuggestions(sugs);
-          } catch { /* ignore if table doesn't exist yet */ }
+            const notes = await getFacilityNotes(id);
+            setFacilityNotes(notes);
+          } catch { /* ignore */ }
         }
       } catch (err) {
         showToast(err.message, 'error');
@@ -124,57 +128,25 @@ export default function MasjidFormPage() {
     setInfoPhotos(next);
   };
 
-  const reloadSuggestions = async () => {
-    try {
-      const sugs = await getFacilitySuggestions({ masjid_id: id });
-      setSuggestions(sugs);
-    } catch {}
-  };
+  const hasPendingCorrections = Object.keys(pendingCorrections).length > 0;
 
-  const handleSuggestionAction = async (sugId, action) => {
+  const handleCorrectionsAction = async (action) => {
+    setCorrectionsLoading(true);
     try {
-      await actionFacilitySuggestion(sugId, action);
-      showToast(action === 'approve' ? 'Saran disetujui' : 'Saran ditolak');
-      await reloadSuggestions();
-      // If approved, refresh facility values to reflect the change
-      if (action === 'approve') {
-        const data = await getMasjid(id);
-        if (data.facilities) setFacilityValues(data.facilities);
-      }
+      await handleFacilityCorrections(id, action);
+      showToast(action === 'accept_all' ? 'Koreksi diterima' : 'Koreksi ditolak');
+      const data = await getMasjid(id);
+      if (data.facilities) setFacilityValues(data.facilities);
+      setPendingCorrections(data.pending_corrections || {});
     } catch (err) {
       showToast(err.message, 'error');
+    } finally {
+      setCorrectionsLoading(false);
     }
   };
 
-  const handleBulkSuggestion = async (status) => {
-    try {
-      await bulkFacilitySuggestionStatus([...selectedSugIds], status);
-      showToast(`${selectedSugIds.size} saran di-${status === 'approved' ? 'setujui' : 'tolak'}`);
-      setSelectedSugIds(new Set());
-      await reloadSuggestions();
-      if (status === 'approved') {
-        const data = await getMasjid(id);
-        if (data.facilities) setFacilityValues(data.facilities);
-      }
-    } catch (err) {
-      showToast(err.message, 'error');
-    }
-  };
-
-  const pendingCount = useMemo(() => suggestions.filter((s) => s.status === 'pending').length, [suggestions]);
-
-  const filteredSuggestions = useMemo(() => {
-    if (sugFilter === 'all') return suggestions;
-    return suggestions.filter((s) => s.status === sugFilter);
-  }, [suggestions, sugFilter]);
-
-  const pendingSugIds = useMemo(
-    () => filteredSuggestions.filter((s) => s.status === 'pending').map((s) => s.id),
-    [filteredSuggestions]
-  );
-
-  const handleSave = async (e) => {
-    e.preventDefault();
+  const handleSave = async (e, alsoApprove = false) => {
+    e?.preventDefault();
     if (!form.name || !form.city) {
       showToast('Nama dan kota wajib diisi', 'error');
       return;
@@ -188,7 +160,10 @@ export default function MasjidFormPage() {
       };
       if (isEdit) {
         await updateMasjid(id, payload);
-        showToast('Masjid diperbarui');
+        if (alsoApprove) {
+          await setMasjidStatus(id, 'approved');
+        }
+        showToast(alsoApprove ? 'Masjid disimpan & disetujui' : 'Masjid disimpan');
       } else {
         await createMasjid(payload);
         showToast('Masjid ditambahkan');
@@ -210,15 +185,24 @@ export default function MasjidFormPage() {
 
   const renderFacilityInput = (fac) => {
     const value = facilityValues[fac.id] || '';
+    const correction = pendingCorrections[fac.id];
+    const showCorrection = correction && correction.pending_value !== value;
 
     if (fac.input_type === 'toggle') {
       return (
-        <ToggleSwitch
-          key={fac.id}
-          label={fac.name}
-          checked={value === 'ya'}
-          onChange={() => setFacValue(fac.id, value === 'ya' ? '' : 'ya')}
-        />
+        <div key={fac.id}>
+          <ToggleSwitch
+            label={fac.name}
+            checked={value === 'ya'}
+            onChange={() => setFacValue(fac.id, value === 'ya' ? '' : 'ya')}
+          />
+          {showCorrection && (
+            <p className="text-xs text-amber-600 mt-1 flex items-center gap-1" title={`Diajukan oleh ${correction.submitted_by || 'Anonim'} pada ${formatDate(correction.created_at)}`}>
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              Saran: {correction.pending_value}
+            </p>
+          )}
+        </div>
       );
     }
 
@@ -234,6 +218,12 @@ export default function MasjidFormPage() {
               <option key={opt} value={opt}>{opt}</option>
             ))}
           </Select>
+          {showCorrection && (
+            <p className="text-xs text-amber-600 mt-1 flex items-center gap-1" title={`Diajukan oleh ${correction.submitted_by || 'Anonim'} pada ${formatDate(correction.created_at)}`}>
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              Saran: {correction.pending_value}
+            </p>
+          )}
         </div>
       );
     }
@@ -247,6 +237,12 @@ export default function MasjidFormPage() {
             value={value}
             onChange={(e) => setFacValue(fac.id, e.target.value)}
           />
+          {showCorrection && (
+            <p className="text-xs text-amber-600 mt-1 flex items-center gap-1" title={`Diajukan oleh ${correction.submitted_by || 'Anonim'} pada ${formatDate(correction.created_at)}`}>
+              <AlertTriangle className="h-3 w-3 shrink-0" />
+              Saran: {correction.pending_value}
+            </p>
+          )}
         </div>
       );
     }
@@ -262,7 +258,12 @@ export default function MasjidFormPage() {
         <h1 className="font-heading text-[22px] font-bold text-text">{isEdit ? 'Edit Masjid' : 'Tambah Masjid'}</h1>
         <div className="flex gap-2">
           <Button variant="outline" onClick={() => navigate('/masjids')}>Batal</Button>
-          <Button onClick={handleSave} disabled={saving} className="font-semibold">{saving ? 'Menyimpan...' : (isEdit ? 'Perbarui' : 'Simpan')}</Button>
+          <Button onClick={handleSave} disabled={saving} className="font-semibold">{saving ? 'Menyimpan...' : 'Simpan'}</Button>
+          {isEdit && form.status === 'pending' && (
+            <Button onClick={(e) => handleSave(e, true)} disabled={saving} className="font-semibold bg-green hover:bg-green/90">
+              {saving ? 'Menyimpan...' : 'Simpan & Approve'}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -310,7 +311,7 @@ export default function MasjidFormPage() {
           </div>
           <div className="mt-4">
             <Label>Foto Utama</Label>
-            <PhotoUpload value={form.photo_url} onChange={(v) => set('photo_url', v)} prefix="masjid" />
+            <PhotoUpload value={form.photo_url} onChange={(v) => set('photo_url', v)} prefix="masjid" resolveUrl={resolvePhotoUrl} />
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
             <div>
@@ -349,7 +350,7 @@ export default function MasjidFormPage() {
             {infoPhotos.map((url, idx) => (
               <div key={idx} className="flex gap-2 mb-2">
                 <div className="flex-1">
-                  <PhotoUpload value={url} onChange={(v) => updateInfoPhoto(idx, v)} prefix="info" />
+                  <PhotoUpload value={url} onChange={(v) => updateInfoPhoto(idx, v)} prefix="info" resolveUrl={resolvePhotoUrl} />
                 </div>
                 {infoPhotos.length > 1 && (
                   <Button type="button" variant="outline" size="sm" onClick={() => removeInfoPhoto(idx)} className="text-red hover:border-red self-start mt-0.5">
@@ -390,125 +391,58 @@ export default function MasjidFormPage() {
           );
         })}
 
-        {/* Saran Fasilitas — edit mode only */}
-        {isEdit && suggestions.length > 0 && (
+        {/* Pending Corrections Summary */}
+        {isEdit && hasPendingCorrections && (
           <FormCard title={
             <span className="flex items-center gap-2">
-              Saran Fasilitas
-              {pendingCount > 0 && (
-                <span className="bg-amber-100 text-amber-700 text-xs font-semibold px-2 py-0.5 rounded-full">
-                  {pendingCount} pending
-                </span>
-              )}
+              Koreksi Fasilitas
+              <span className="bg-amber-100 text-amber-700 text-xs font-semibold px-2 py-0.5 rounded-full">
+                {Object.keys(pendingCorrections).length} pending
+              </span>
             </span>
           }>
-            <div className="mb-4">
-              <Select
-                value={sugFilter}
-                onChange={(e) => { setSugFilter(e.target.value); setSelectedSugIds(new Set()); }}
-                className="sm:w-[180px]"
+            <p className="text-sm text-text-2 mb-3">
+              {Object.keys(pendingCorrections).length} koreksi fasilitas dari jamaah menunggu review.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => handleCorrectionsAction('accept_all')}
+                disabled={correctionsLoading}
+                className="font-semibold"
               >
-                <option value="pending">Pending</option>
-                <option value="approved">Disetujui</option>
-                <option value="rejected">Ditolak</option>
-                <option value="all">Semua</option>
-              </Select>
+                <Check className="h-3.5 w-3.5 mr-1" />
+                Terima Semua
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => handleCorrectionsAction('reject_all')}
+                disabled={correctionsLoading}
+                className="font-semibold hover:border-red hover:text-red"
+              >
+                <X className="h-3.5 w-3.5 mr-1" />
+                Tolak Semua
+              </Button>
             </div>
+          </FormCard>
+        )}
 
-            <BulkBar
-              count={selectedSugIds.size}
-              onApprove={() => handleBulkSuggestion('approved')}
-              onReject={() => handleBulkSuggestion('rejected')}
-            />
-
-            {filteredSuggestions.length === 0 ? (
-              <p className="text-text-3 text-sm py-4 text-center">Tidak ada saran dengan status ini.</p>
-            ) : (
-              <div className="overflow-x-auto -mx-2">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border text-left text-text-2">
-                      <th className="py-2 px-2 w-10">
-                        <Checkbox
-                          checked={
-                            pendingSugIds.length > 0 && pendingSugIds.every((sid) => selectedSugIds.has(sid))
-                              ? true
-                              : pendingSugIds.some((sid) => selectedSugIds.has(sid))
-                                ? 'indeterminate'
-                                : false
-                          }
-                          onCheckedChange={() => {
-                            if (pendingSugIds.every((sid) => selectedSugIds.has(sid))) {
-                              setSelectedSugIds(new Set());
-                            } else {
-                              setSelectedSugIds(new Set(pendingSugIds));
-                            }
-                          }}
-                          disabled={pendingSugIds.length === 0}
-                        />
-                      </th>
-                      <th className="py-2 px-2 font-medium">Fasilitas</th>
-                      <th className="py-2 px-2 font-medium">Nilai Saran</th>
-                      <th className="py-2 px-2 font-medium">Diajukan Oleh</th>
-                      <th className="py-2 px-2 font-medium">Tanggal</th>
-                      <th className="py-2 px-2 font-medium">Status</th>
-                      <th className="py-2 px-2 font-medium">Aksi</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredSuggestions.map((sug) => (
-                      <tr key={sug.id} className="border-b border-border/50 hover:bg-gray-50">
-                        <td className="py-2.5 px-2 w-10">
-                          {sug.status === 'pending' ? (
-                            <Checkbox
-                              checked={selectedSugIds.has(sug.id)}
-                              onCheckedChange={() => {
-                                const next = new Set(selectedSugIds);
-                                if (next.has(sug.id)) next.delete(sug.id);
-                                else next.add(sug.id);
-                                setSelectedSugIds(next);
-                              }}
-                            />
-                          ) : null}
-                        </td>
-                        <td className="py-2.5 px-2 font-medium text-text">{sug.facility_name || <span className="text-text-3 italic">Lainnya</span>}</td>
-                        <td className="py-2.5 px-2 text-text">{sug.suggested_value}</td>
-                        <td className="py-2.5 px-2 text-text-2">{sug.submitted_by_wa ? formatWA(sug.submitted_by_wa) : '—'}</td>
-                        <td className="py-2.5 px-2 text-text-2 whitespace-nowrap">{formatDate(sug.created_at)}</td>
-                        <td className="py-2.5 px-2"><Badge status={sug.status} /></td>
-                        <td className="py-2.5 px-2">
-                          {sug.status === 'pending' && (
-                            <div className="flex gap-1.5">
-                              {sug.facility_id && (
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  onClick={() => handleSuggestionAction(sug.id, 'approve')}
-                                  className="h-7 px-2 text-xs"
-                                >
-                                  <Check className="h-3 w-3 mr-1" />
-                                  Setujui
-                                </Button>
-                              )}
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                onClick={() => handleSuggestionAction(sug.id, 'reject')}
-                                className="h-7 px-2 text-xs text-red hover:border-red"
-                              >
-                                <X className="h-3 w-3 mr-1" />
-                                Tolak
-                              </Button>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+        {/* Catatan dari Jamaah */}
+        {isEdit && facilityNotes.length > 0 && (
+          <FormCard title="Catatan dari Jamaah">
+            <div className="space-y-3">
+              {facilityNotes.map((note) => (
+                <div key={note.id} className="p-3 bg-bg rounded-sm border border-border/50">
+                  <p className="text-sm text-text">{note.text}</p>
+                  <p className="text-xs text-text-3 mt-1.5">
+                    {note.submitted_by || 'Anonim'} &middot; {formatDate(note.created_at)}
+                  </p>
+                </div>
+              ))}
+            </div>
           </FormCard>
         )}
       </form>
