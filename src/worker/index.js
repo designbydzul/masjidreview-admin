@@ -104,14 +104,22 @@ async function logAudit(env, { adminId, adminName, action, resourceType, resourc
   }
 }
 
+// ── Shared Constants & Helpers ──
+
+const MASJID_STOP_WORDS = ['masjid','agung','besar','jami','raya','al','an','ar','as','at'];
+
+function normalizeMasjidName(name) {
+  return name.replace(/[-'`']/g, '').replace(/\s+/g, ' ').trim();
+}
+
 // ── Masjid Fuzzy Match ──
 
 async function matchMasjid(name, city, env) {
-  const stopWords = ['masjid','agung','besar','jami','raya','al','an','ar','as','at'];
-  const words = name.split(/[\s\-]+/).filter(w => !stopWords.includes(w.toLowerCase()) && w.length > 1);
+  const normalized = normalizeMasjidName(name);
+  const words = normalized.split(/\s+/).filter(w => !MASJID_STOP_WORDS.includes(w.toLowerCase()) && w.length > 1);
   if (words.length === 0) return null;
 
-  const conditions = words.map(() => "name LIKE ?");
+  const conditions = words.map(() => "REPLACE(REPLACE(REPLACE(name, '-', ''), '''', ''), '`', '') LIKE ?");
   const baseParams = words.map(w => '%' + w + '%');
 
   const baseSql = "SELECT id, name, city FROM masjid WHERE status = 'approved' AND (" + conditions.join(' OR ') + ")";
@@ -1178,9 +1186,9 @@ export default {
         const masjid = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(masjidId).first();
         if (!masjid) return json({ error: 'Masjid not found' }, 404);
 
-        const stopWords = ['masjid','agung','besar','jami','raya','al','an','ar','as','at'];
-        const words = masjid.name.split(/\s+/).filter(function(w) {
-          return !stopWords.includes(w.toLowerCase()) && w.length > 1;
+        const normalized = normalizeMasjidName(masjid.name);
+        const words = normalized.split(/\s+/).filter(function(w) {
+          return !MASJID_STOP_WORDS.includes(w.toLowerCase()) && w.length > 1;
         });
 
         if (words.length === 0) return json([]);
@@ -1188,7 +1196,7 @@ export default {
         const conditions = [];
         const params = [];
         for (const word of words) {
-          conditions.push("name LIKE ?");
+          conditions.push("REPLACE(REPLACE(REPLACE(name, '-', ''), '''', ''), '`', '') LIKE ?");
           params.push('%' + word + '%');
         }
 

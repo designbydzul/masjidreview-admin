@@ -81,7 +81,8 @@ export default function UserListPage() {
     let result = users;
     if (debouncedSearch) {
       const q = debouncedSearch.toLowerCase();
-      result = result.filter((u) => u.name?.toLowerCase().includes(q) || u.wa_number?.includes(q));
+      const qWA = normalizeWA(debouncedSearch);
+      result = result.filter((u) => u.name?.toLowerCase().includes(q) || u.wa_number?.includes(qWA));
     }
     if (filterValues.city) result = result.filter((u) => u.city === filterValues.city);
     if (filterValues.age_range) result = result.filter((u) => u.age_range === filterValues.age_range);

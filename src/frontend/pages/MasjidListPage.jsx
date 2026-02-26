@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import Fuse from 'fuse.js';
 import { Building2, Plus, ImageIcon, Pencil, XCircle, Search as SearchIcon, Trash2, ExternalLink } from 'lucide-react';
 import { getMasjids, setMasjidStatus, bulkMasjidStatus, deleteMasjid, getSimilarMasjids } from '../api';
 import { useAuth } from '../contexts/AuthContext';
@@ -52,16 +53,21 @@ export default function MasjidListPage() {
     return cities.map((c) => ({ value: c, label: c }));
   }, [masjids]);
 
+  const fuse = useMemo(() => new Fuse(masjids, {
+    keys: ['name', 'city'],
+    threshold: 0.35,
+  }), [masjids]);
+
   const filtered = useMemo(() => {
     let result = masjids;
     if (filter !== 'all') result = result.filter((m) => m.status === filter);
     if (debouncedSearch) {
-      const q = debouncedSearch.toLowerCase();
-      result = result.filter((m) => m.name?.toLowerCase().includes(q));
+      const matchedIds = new Set(fuse.search(debouncedSearch).map((r) => r.item.id));
+      result = result.filter((m) => matchedIds.has(m.id));
     }
     if (filterValues.city) result = result.filter((m) => m.city === filterValues.city);
     return result;
-  }, [masjids, filter, debouncedSearch, filterValues]);
+  }, [masjids, fuse, filter, debouncedSearch, filterValues]);
 
   const { sortedData, sortConfig, requestSort } = useClientSort(filtered);
 
