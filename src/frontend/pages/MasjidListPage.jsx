@@ -17,6 +17,7 @@ import useClientSort from '../hooks/useClientSort';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { SkeletonTablePage } from '../components/Skeleton';
+import { resolvePhotoUrl } from '../utils/url';
 
 export default function MasjidListPage() {
   const { admin } = useAuth();
@@ -150,7 +151,7 @@ export default function MasjidListPage() {
       key: 'photo_url',
       label: 'Foto',
       render: (row) => row.photo_url
-        ? <img src={row.photo_url} alt={row.name} className="w-10 h-10 rounded object-cover" />
+        ? <img src={resolvePhotoUrl(row.photo_url)} alt={row.name} className="w-10 h-10 rounded object-cover" />
         : <div className="w-10 h-10 rounded bg-bg-2 flex items-center justify-center"><ImageIcon className="h-4 w-4 text-text-3" /></div>,
     },
     {

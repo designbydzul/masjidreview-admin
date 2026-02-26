@@ -12,6 +12,7 @@ import { Select } from '../components/ui/select';
 import { Button } from '../components/ui/button';
 import { SkeletonFormPage } from '../components/Skeleton';
 import { formatDate, formatWA } from '../utils/format';
+import { resolvePhotoUrl } from '../utils/url';
 
 const GROUP_LABELS = {
   ramadhan: 'Fasilitas Ramadhan',
@@ -22,12 +23,6 @@ const GROUP_LABELS = {
 const emptyForm = {
   name: '', city: '', address: '', photo_url: '', google_maps_url: '', latitude: '', longitude: '', ig_post_url: '',
   info_label: '', info_photos: '[]',
-};
-
-const resolvePhotoUrl = (url) => {
-  if (!url) return url;
-  if (url.startsWith('/images/')) return 'https://masjidreview.id' + url;
-  return url;
 };
 
 export default function MasjidFormPage() {
