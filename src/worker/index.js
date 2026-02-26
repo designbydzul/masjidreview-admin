@@ -1254,6 +1254,8 @@ export default {
         const body = await request.json();
         if (!body.name || !body.city) return json({ error: 'name and city required' }, 400);
 
+        if (!env.GOOGLE_PLACES_KEY) return json({ error: 'Google Places API key not configured' }, 500);
+
         const placesRes = await fetch('https://places.googleapis.com/v1/places:searchText', {
           method: 'POST',
           headers: {
