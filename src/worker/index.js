@@ -1233,6 +1233,70 @@ export default {
         return json({ ok: true, url: publicUrl, key: key });
       }
 
+      // ── POST /api/places/search ──
+      if (pathname === '/api/places/search' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        // Daily rate limit: 30 requests/day
+        await env.DB.prepare(
+          "CREATE TABLE IF NOT EXISTS places_rate_limit (date TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0)"
+        ).run();
+        const today = new Date().toISOString().split('T')[0];
+        const rlRow = await env.DB.prepare("SELECT count FROM places_rate_limit WHERE date = ?").bind(today).first();
+        if (rlRow && rlRow.count >= 30) {
+          return json({ error: 'Batas harian tercapai (30/hari). Silakan coba lagi besok.' }, 429);
+        }
+        await env.DB.prepare(
+          "INSERT INTO places_rate_limit (date, count) VALUES (?, 1) ON CONFLICT(date) DO UPDATE SET count = count + 1"
+        ).bind(today).run();
+
+        const body = await request.json();
+        if (!body.name || !body.city) return json({ error: 'name and city required' }, 400);
+
+        const placesRes = await fetch('https://places.googleapis.com/v1/places:searchText', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': env.GOOGLE_PLACES_KEY,
+            'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.googleMapsUri,places.location,places.photos',
+          },
+          body: JSON.stringify({ textQuery: body.name + ' ' + body.city, languageCode: 'id' }),
+        });
+        const placesData = await placesRes.json();
+        const place = placesData.places?.[0];
+        if (!place) return json({ found: false });
+
+        const result = {
+          found: true,
+          address: place.formattedAddress || '',
+          google_maps_url: place.googleMapsUri || '',
+          latitude: place.location?.latitude || null,
+          longitude: place.location?.longitude || null,
+          photo_url: null,
+        };
+
+        if (place.photos?.length > 0) {
+          try {
+            const photoName = place.photos[0].name;
+            const photoRes = await fetch(
+              'https://places.googleapis.com/v1/' + photoName + '/media?maxWidthPx=800&key=' + env.GOOGLE_PLACES_KEY
+            );
+            if (photoRes.ok) {
+              const contentType = photoRes.headers.get('content-type') || 'image/jpeg';
+              const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg';
+              const r2Key = 'places/' + crypto.randomUUID() + '.' + ext;
+              await env.IMAGES.put(r2Key, photoRes.body, { httpMetadata: { contentType } });
+              result.photo_url = 'https://masjidreview.id/images/' + r2Key;
+            }
+          } catch (e) {
+            // Photo fetch failed, continue without photo
+          }
+        }
+
+        return json(result);
+      }
+
       // ── PATCH /api/masjids/bulk-status ──
       if (pathname === '/api/masjids/bulk-status' && request.method === 'PATCH') {
         const admin = await getSession(request, env);

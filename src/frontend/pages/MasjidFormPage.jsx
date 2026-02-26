@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { X, Plus, Check, AlertTriangle } from 'lucide-react';
-import { getMasjid, getMasjids, createMasjid, updateMasjid, setMasjidStatus, getFacilities, handleFacilityCorrections, getFacilityNotes } from '../api';
+import { getMasjid, getMasjids, createMasjid, updateMasjid, setMasjidStatus, getFacilities, handleFacilityCorrections, getFacilityNotes, searchPlaces } from '../api';
 import { useToast } from '../contexts/ToastContext';
 import FormCard from '../components/FormCard';
 import ToggleSwitch from '../components/ToggleSwitch';
@@ -50,6 +50,9 @@ export default function MasjidFormPage() {
 
   // Coordinate extraction message
   const [coordMsg, setCoordMsg] = useState('');
+
+  // Google Places auto-fill
+  const [placesLoading, setPlacesLoading] = useState(false);
 
   useEffect(() => {
     const loadAll = async () => {
@@ -137,6 +140,30 @@ export default function MasjidFormPage() {
       showToast(err.message, 'error');
     } finally {
       setCorrectionsLoading(false);
+    }
+  };
+
+  const handlePlacesSearch = async () => {
+    setPlacesLoading(true);
+    try {
+      const data = await searchPlaces(form.name, form.city);
+      if (!data.found) {
+        showToast('Tidak ditemukan di Google Maps. Silakan isi manual.', 'error');
+        return;
+      }
+      setForm((prev) => ({
+        ...prev,
+        address: data.address || prev.address,
+        google_maps_url: data.google_maps_url || prev.google_maps_url,
+        latitude: data.latitude ?? prev.latitude,
+        longitude: data.longitude ?? prev.longitude,
+        photo_url: prev.photo_url || data.photo_url || prev.photo_url,
+      }));
+      showToast('Data dari Google Maps berhasil diisi');
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setPlacesLoading(false);
     }
   };
 
@@ -299,6 +326,17 @@ export default function MasjidFormPage() {
                 {cityOptions.map((c) => <option key={c} value={c} />)}
               </datalist>
             </div>
+          </div>
+          <div className="mt-3">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!form.name || !form.city || placesLoading}
+              onClick={handlePlacesSearch}
+            >
+              {placesLoading ? 'Mencari...' : 'Isi Otomatis dari Google Maps'}
+            </Button>
           </div>
           <div className="mt-4">
             <Label>Alamat</Label>

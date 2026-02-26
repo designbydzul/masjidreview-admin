@@ -40,6 +40,8 @@ export const uploadFile = (file, prefix) => {
   return apiFetch('/api/upload', { method: 'POST', body: formData });
 };
 
+export const searchPlaces = (name, city) => apiFetch('/api/places/search', { method: 'POST', body: JSON.stringify({ name, city }) });
+
 // Reviews
 export const createReview = (data) => apiFetch('/api/reviews', { method: 'POST', body: JSON.stringify(data) });
 export const getReviews = (status) => apiFetch('/api/reviews' + (status ? '?status=' + status : ''));
