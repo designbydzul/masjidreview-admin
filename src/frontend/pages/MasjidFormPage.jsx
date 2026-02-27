@@ -76,6 +76,29 @@ export default function MasjidFormPage() {
             const notes = await getFacilityNotes(id);
             setFacilityNotes(notes);
           } catch { /* ignore */ }
+
+          // Auto-fill from Google Places for pending submissions
+          if (data.status === 'pending' && data.name && data.city) {
+            const needsAutoFill = !data.address || !data.latitude || !data.longitude || !data.google_maps_url;
+            if (needsAutoFill) {
+              setPlacesLoading(true);
+              try {
+                const placesData = await searchPlaces(data.name, data.city);
+                if (placesData.found) {
+                  setForm((prev) => ({
+                    ...prev,
+                    address: placesData.address || prev.address,
+                    google_maps_url: placesData.google_maps_url || prev.google_maps_url,
+                    latitude: placesData.latitude ?? prev.latitude,
+                    longitude: placesData.longitude ?? prev.longitude,
+                    photo_url: prev.photo_url || placesData.photo_url || prev.photo_url,
+                  }));
+                  showToast('Data dari Google Maps berhasil diisi otomatis');
+                }
+              } catch { /* silent — admin can use manual button */ }
+              finally { setPlacesLoading(false); }
+            }
+          }
         }
       } catch (err) {
         showToast(err.message, 'error');
@@ -327,6 +350,14 @@ export default function MasjidFormPage() {
               </datalist>
             </div>
           </div>
+          {isEdit && form.status === 'pending' && form.name && form.city && (!form.address || !form.latitude) && !placesLoading && (
+            <div className="mt-3 p-3 bg-amber-50 border border-amber-200 rounded-sm flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+              <p className="text-sm text-amber-700">
+                Data lokasi belum terisi otomatis. Kemungkinan ada beberapa masjid serupa di Google Maps. Gunakan tombol di bawah untuk mencari manual.
+              </p>
+            </div>
+          )}
           <div className="mt-3">
             <Button
               type="button"
