@@ -1271,6 +1271,7 @@ export default {
 
         const result = {
           found: true,
+          result_count: placesData.places?.length || 0,
           address: place.formattedAddress || '',
           google_maps_url: place.googleMapsUri || '',
           latitude: place.location?.latitude || null,

@@ -84,7 +84,7 @@ export default function MasjidFormPage() {
               setPlacesLoading(true);
               try {
                 const placesData = await searchPlaces(data.name, data.city);
-                if (placesData.found) {
+                if (placesData.found && placesData.result_count === 1) {
                   setForm((prev) => ({
                     ...prev,
                     address: placesData.address || prev.address,
