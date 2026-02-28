@@ -16,7 +16,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { SkeletonTablePage } from '../components/Skeleton';
 import { formatWA, formatDate } from '../utils/format';
 
-const emptyCreateForm = { name: '', wa_number: '', city: '', age_range: '' };
+const emptyCreateForm = { name: '', wa_number: '', city: '', age_range: '', gender: '' };
 const AGE_OPTIONS = ['<15', '16-20', '21-25', '26-30', '31-40', '41-50', '50+'];
 
 function normalizeWA(val) {
@@ -85,6 +85,7 @@ export default function UserListPage() {
       result = result.filter((u) => u.name?.toLowerCase().includes(q) || u.wa_number?.includes(qWA));
     }
     if (filterValues.city) result = result.filter((u) => u.city === filterValues.city);
+    if (filterValues.gender) result = result.filter((u) => u.gender === filterValues.gender);
     if (filterValues.age_range) result = result.filter((u) => u.age_range === filterValues.age_range);
     if (dateFrom) result = result.filter((u) => u.created_at >= dateFrom);
     if (dateTo) result = result.filter((u) => u.created_at <= dateTo + 'T23:59:59');
@@ -139,6 +140,7 @@ export default function UserListPage() {
         wa_number: normalizeWA(createForm.wa_number),
         city: createForm.city.trim() || null,
         age_range: createForm.age_range || null,
+        gender: createForm.gender || null,
       });
       showToast('User ditambahkan');
       setShowCreate(false);
@@ -160,6 +162,7 @@ export default function UserListPage() {
     { key: 'wa_number', label: 'WhatsApp', render: (row) => <span className="text-text-2">{formatWA(row.wa_number)}</span> },
     { key: 'email', label: 'Email', render: (row) => <span className="text-text-2 text-xs">{row.email || '-'}</span> },
     { key: 'city', label: 'Kota', sortable: true, render: (row) => row.city || '-' },
+    { key: 'gender', label: 'Gender', sortable: true, render: (row) => row.gender || '-' },
     { key: 'age_range', label: 'Usia', sortable: true, render: (row) => row.age_range || '-' },
     { key: 'review_count', label: 'Reviews', sortable: true, render: (row) => <span className="font-heading font-medium">{row.review_count || 0}</span> },
     { key: 'created_at', label: 'Bergabung', sortable: true, render: (row) => <span className="text-text-3 text-xs">{formatDate(row.created_at)}</span> },
@@ -174,7 +177,7 @@ export default function UserListPage() {
     },
   ];
 
-  if (loading) return <SkeletonTablePage columns={8} hasButton />;
+  if (loading) return <SkeletonTablePage columns={9} hasButton />;
 
   return (
     <div>
@@ -191,6 +194,10 @@ export default function UserListPage() {
         onSearchChange={handleSearchChange}
         filters={[
           { key: 'city', label: 'Kota', options: cityOptions },
+          { key: 'gender', label: 'Gender', options: [
+            { value: 'Laki-laki', label: 'Laki-laki' },
+            { value: 'Perempuan', label: 'Perempuan' },
+          ] },
           { key: 'age_range', label: 'Usia', options: [
             { value: '<15', label: '< 15' },
             { value: '16-20', label: '16-20' },
@@ -299,6 +306,14 @@ export default function UserListPage() {
                   <option key={c.value} value={c.value} />
                 ))}
               </datalist>
+            </div>
+            <div>
+              <Label>Gender</Label>
+              <Select value={createForm.gender} onChange={(e) => setField('gender', e.target.value)}>
+                <option value="">Belum diatur</option>
+                <option value="Laki-laki">Laki-laki</option>
+                <option value="Perempuan">Perempuan</option>
+              </Select>
             </div>
             <div>
               <Label>Rentang Usia</Label>

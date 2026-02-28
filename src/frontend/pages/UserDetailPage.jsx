@@ -30,6 +30,7 @@ export default function UserDetailPage() {
   const [editName, setEditName] = useState('');
   const [editCity, setEditCity] = useState('');
   const [editAgeRange, setEditAgeRange] = useState('');
+  const [editGender, setEditGender] = useState('');
 
   const loadData = () => {
     setLoading(true);
@@ -48,12 +49,13 @@ export default function UserDetailPage() {
     setEditName(user.name || '');
     setEditCity(user.city || '');
     setEditAgeRange(user.age_range || '');
+    setEditGender(user.gender || '');
     setEditModal(true);
   };
 
   const handleEditSave = async () => {
     try {
-      await updateUser(id, { name: editName, city: editCity, age_range: editAgeRange || null });
+      await updateUser(id, { name: editName, city: editCity, age_range: editAgeRange || null, gender: editGender || null });
       showToast('User diperbarui');
       setEditModal(false);
       loadData();
@@ -124,9 +126,10 @@ export default function UserDetailPage() {
       {/* User info card */}
       <Card className="mb-5">
         <CardContent className="p-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
             <div><span className="text-xs text-text-3 block">Nama</span><span className="text-sm font-medium text-text">{user.name || '-'}</span></div>
             <div><span className="text-xs text-text-3 block">WhatsApp</span><span className="text-sm text-text">{formatWA(user.wa_number)}</span></div>
+            <div><span className="text-xs text-text-3 block">Gender</span><span className="text-sm text-text">{user.gender || '-'}</span></div>
             <div><span className="text-xs text-text-3 block">Kota</span><span className="text-sm text-text">{user.city || '-'}</span></div>
             <div><span className="text-xs text-text-3 block">Usia</span><span className="text-sm text-text">{user.age_range || '-'}</span></div>
             <div><span className="text-xs text-text-3 block">Bergabung</span><span className="text-sm text-text">{formatDate(user.created_at)}</span></div>
@@ -163,6 +166,14 @@ export default function UserDetailPage() {
             <div>
               <Label>Nama</Label>
               <Input value={editName} onChange={(e) => setEditName(e.target.value)} />
+            </div>
+            <div>
+              <Label>Gender</Label>
+              <Select value={editGender} onChange={(e) => setEditGender(e.target.value)}>
+                <option value="">Belum diatur</option>
+                <option value="Laki-laki">Laki-laki</option>
+                <option value="Perempuan">Perempuan</option>
+              </Select>
             </div>
             <div>
               <Label>Kota</Label>

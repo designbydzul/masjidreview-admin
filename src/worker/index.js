@@ -575,6 +575,12 @@ async function runMigrations(env) {
     await env.DB.prepare('INSERT INTO _migrations (version) VALUES (11)').run();
   }
 
+  // v12: Add gender column to users table
+  if (currentVersion < 12) {
+    try { await env.DB.prepare('ALTER TABLE users ADD COLUMN gender TEXT').run(); } catch (e) { /* column may exist */ }
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (12)').run();
+  }
+
   migrated = true;
 }
 
@@ -1723,10 +1729,12 @@ export default {
         const id = crypto.randomUUID();
         const city = body.city ? String(body.city).trim() : null;
         const age_range = body.age_range ? String(body.age_range).trim() : null;
+        const gender = body.gender ? String(body.gender).trim() : null;
+        if (gender && gender !== 'Laki-laki' && gender !== 'Perempuan') return json({ error: 'Gender tidak valid' }, 400);
 
         await env.DB.prepare(
-          "INSERT INTO users (id, name, wa_number, role, city, age_range, created_at) VALUES (?, ?, ?, 'user', ?, ?, datetime('now'))"
-        ).bind(id, name, rawWA, city, age_range).run();
+          "INSERT INTO users (id, name, wa_number, role, city, age_range, gender, created_at) VALUES (?, ?, ?, 'user', ?, ?, ?, datetime('now'))"
+        ).bind(id, name, rawWA, city, age_range, gender).run();
 
         const created = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(id).first();
         logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'user_create', resourceType: 'user', resourceId: id, resourceName: name, beforeData: null, afterData: { name, wa_number: rawWA } });
@@ -1806,18 +1814,21 @@ export default {
 
         if (request.method === 'PUT') {
           const body = await request.json();
-          const beforeUser = await env.DB.prepare('SELECT id, name, city, age_range FROM users WHERE id = ?').bind(userId).first();
+          const beforeUser = await env.DB.prepare('SELECT id, name, city, age_range, gender FROM users WHERE id = ?').bind(userId).first();
           const name = body.name ? String(body.name).trim() : null;
           const city = body.city ? String(body.city).trim() : null;
           const age_range = body.age_range !== undefined ? (body.age_range ? String(body.age_range).trim() : null) : undefined;
+          const gender = body.gender !== undefined ? (body.gender ? String(body.gender).trim() : null) : undefined;
           if (!name) return json({ error: 'Nama tidak boleh kosong' }, 400);
-          if (age_range !== undefined) {
-            await env.DB.prepare('UPDATE users SET name = ?, city = ?, age_range = ? WHERE id = ?').bind(name, city || null, age_range, userId).run();
-          } else {
-            await env.DB.prepare('UPDATE users SET name = ?, city = ? WHERE id = ?').bind(name, city || null, userId).run();
-          }
+          if (gender && gender !== 'Laki-laki' && gender !== 'Perempuan') return json({ error: 'Gender tidak valid' }, 400);
+          const sets = ['name = ?', 'city = ?'];
+          const params = [name, city || null];
+          if (age_range !== undefined) { sets.push('age_range = ?'); params.push(age_range); }
+          if (gender !== undefined) { sets.push('gender = ?'); params.push(gender); }
+          params.push(userId);
+          await env.DB.prepare(`UPDATE users SET ${sets.join(', ')} WHERE id = ?`).bind(...params).run();
           const updated = await env.DB.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first();
-          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'user_edit', resourceType: 'user', resourceId: userId, resourceName: beforeUser?.name, beforeData: beforeUser ? { name: beforeUser.name, city: beforeUser.city, age_range: beforeUser.age_range } : null, afterData: { name, city, ...(age_range !== undefined ? { age_range } : {}) } });
+          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'user_edit', resourceType: 'user', resourceId: userId, resourceName: beforeUser?.name, beforeData: beforeUser ? { name: beforeUser.name, city: beforeUser.city, age_range: beforeUser.age_range, gender: beforeUser.gender } : null, afterData: { name, city, ...(age_range !== undefined ? { age_range } : {}), ...(gender !== undefined ? { gender } : {}) } });
           return json(updated);
         }
 
