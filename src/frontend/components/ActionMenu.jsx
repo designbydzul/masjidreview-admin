@@ -1,40 +1,73 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { MoreVertical } from 'lucide-react';
 import { cn } from '../lib/utils';
 
 export default function ActionMenu({ items }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  const buttonRef = useRef(null);
+  const menuRef = useRef(null);
+  const [pos, setPos] = useState({ top: 0, right: 0, openUp: false });
 
+  // Close on outside click, Escape, or any scroll (fixed position won't follow scroll)
   useEffect(() => {
     if (!open) return;
     const handleClick = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      if (buttonRef.current?.contains(e.target)) return;
+      if (menuRef.current?.contains(e.target)) return;
+      setOpen(false);
     };
-    const handleKey = (e) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
+    const handleKey = (e) => { if (e.key === 'Escape') setOpen(false); };
+    const handleScroll = () => setOpen(false);
     document.addEventListener('mousedown', handleClick);
     document.addEventListener('keydown', handleKey);
+    window.addEventListener('scroll', handleScroll, true);
     return () => {
       document.removeEventListener('mousedown', handleClick);
       document.removeEventListener('keydown', handleKey);
+      window.removeEventListener('scroll', handleScroll, true);
     };
+  }, [open]);
+
+  const handleToggle = useCallback(() => {
+    if (!open && buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const openUp = spaceBelow < 200;
+      setPos({
+        top: openUp ? undefined : rect.bottom + 4,
+        bottom: openUp ? (window.innerHeight - rect.top + 4) : undefined,
+        right: window.innerWidth - rect.right,
+        openUp,
+      });
+    }
+    setOpen((o) => !o);
   }, [open]);
 
   if (!items || items.length === 0) return null;
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
-        onClick={() => setOpen((o) => !o)}
+        ref={buttonRef}
+        onClick={handleToggle}
         className="inline-flex items-center justify-center h-8 w-8 rounded-sm text-text-3 hover:text-text hover:bg-bg transition-colors"
       >
         <MoreVertical className="h-4 w-4" />
       </button>
 
-      {open && (
-        <div className="absolute right-0 top-full mt-1 min-w-[160px] bg-white border border-border rounded-sm shadow-lg z-20 py-1">
+      {open && createPortal(
+        <div
+          ref={menuRef}
+          style={{
+            position: 'fixed',
+            top: pos.top,
+            bottom: pos.bottom,
+            right: pos.right,
+            zIndex: 9999,
+          }}
+          className="min-w-[160px] bg-white border border-border rounded-sm shadow-lg py-1 animate-in fade-in-0 zoom-in-95 duration-100"
+        >
           {items.map((item, i) => {
             const Icon = item.icon;
             return (
@@ -56,8 +89,9 @@ export default function ActionMenu({ items }) {
               </button>
             );
           })}
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   );
 }
