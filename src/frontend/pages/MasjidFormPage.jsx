@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { X, Plus, Check, AlertTriangle, Camera, Trash2, MapPin, Loader2 } from 'lucide-react';
-import { getMasjid, getMasjids, createMasjid, updateMasjid, setMasjidStatus, getFacilities, handleFacilityCorrections, getFacilityNotes, searchPlaces, uploadFile } from '../api';
+import { getMasjid, getMasjids, createMasjid, updateMasjid, setMasjidStatus, getFacilities, handleFacilityCorrections, getFacilityNotes, searchPlaces, downloadPlacesPhoto, uploadFile } from '../api';
 import { useToast } from '../contexts/ToastContext';
 import FormCard from '../components/FormCard';
 import { Input } from '../components/ui/input';
@@ -47,6 +47,7 @@ export default function MasjidFormPage() {
   const [placesResults, setPlacesResults] = useState([]);
   const [showPlacesModal, setShowPlacesModal] = useState(false);
   const [highlightedFields, setHighlightedFields] = useState({});
+  const [photoDownloading, setPhotoDownloading] = useState(false);
 
   // Photo upload
   const mainPhotoRef = useRef(null);
@@ -154,6 +155,21 @@ export default function MasjidFormPage() {
     if (result.longitude) fields.longitude = true;
     setHighlightedFields(fields);
     setTimeout(() => setHighlightedFields({}), 2000);
+  };
+
+  const fetchPlacesPhoto = async (photoRef) => {
+    if (!photoRef) return;
+    setPhotoDownloading(true);
+    try {
+      const data = await downloadPlacesPhoto(photoRef);
+      if (data.photo_url) {
+        set('photo_url', data.photo_url);
+      }
+    } catch {
+      // Photo download failed silently — user can upload manually
+    } finally {
+      setPhotoDownloading(false);
+    }
   };
 
   const handlePlacesSearch = async () => {
@@ -326,11 +342,18 @@ export default function MasjidFormPage() {
 
       <form onSubmit={handleSave}>
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-          {/* ══════════ LEFT COLUMN (3/5 = 60%) ══════════ */}
-          <div className="lg:col-span-3 space-y-4">
+          {/* ══════════ LEFT COLUMN (4/5 = 80%) ══════════ */}
+          <div className="lg:col-span-4 space-y-4">
 
             {/* ── Informasi Dasar ── */}
-            <FormCard title="Informasi Dasar">
+            <FormCard title={
+              <div className="flex items-center justify-between w-full">
+                <span>Informasi Dasar</span>
+                <Button type="button" variant="outline" size="sm" disabled={!form.name || !form.city || placesLoading} onClick={handlePlacesSearch} className="text-xs h-7">
+                  {placesLoading ? <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />Mencari...</> : <><MapPin className="h-3.5 w-3.5 mr-1" />Isi Otomatis</>}
+                </Button>
+              </div>
+            }>
               {isEdit && (form.submitted_by_name || form.submitted_by) && (
                 <div className="mb-4 pb-3 border-b border-border/50">
                   <p className="text-xs text-text-3">
@@ -393,18 +416,13 @@ export default function MasjidFormPage() {
                   <Label>IG Post URL</Label>
                   <Input value={form.ig_post_url || ''} onChange={(e) => set('ig_post_url', e.target.value)} className="text-xs" />
                 </div>
-                <div className="col-span-5 md:col-span-1">
+                <div className="col-span-5 md:col-span-2">
                   <Label>Lat</Label>
                   <Input value={form.latitude || ''} onChange={(e) => set('latitude', e.target.value)} className={cn('text-xs', highlightedFields.latitude && 'ring-2 ring-green/40 bg-green-light transition-all duration-500')} />
                 </div>
-                <div className="col-span-5 md:col-span-1">
+                <div className="col-span-5 md:col-span-2">
                   <Label>Long</Label>
                   <Input value={form.longitude || ''} onChange={(e) => set('longitude', e.target.value)} className={cn('text-xs', highlightedFields.longitude && 'ring-2 ring-green/40 bg-green-light transition-all duration-500')} />
-                </div>
-                <div className="col-span-10 md:col-span-2 flex items-end">
-                  <Button type="button" variant="outline" size="sm" disabled={!form.name || !form.city || placesLoading} onClick={handlePlacesSearch} className="w-full text-xs h-9">
-                    {placesLoading ? <><Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />Mencari...</> : <><MapPin className="h-3.5 w-3.5 mr-1" />Isi Otomatis</>}
-                  </Button>
                 </div>
               </div>
             </FormCard>
@@ -413,6 +431,38 @@ export default function MasjidFormPage() {
             <FormCard title="Informasi Umum">
               <Label>Info Label</Label>
               <Input value={form.info_label || ''} onChange={(e) => set('info_label', e.target.value)} />
+
+              {/* Info Photos (inline) */}
+              <div className="mt-4 pt-3 border-t border-border/50">
+                <Label className="mb-2 block">Info Photos</Label>
+                <div className="flex items-center gap-2 flex-wrap">
+                  {infoPhotos.map((url, idx) => (
+                    <div key={idx} className="relative group w-16 h-16 shrink-0">
+                      <img src={resolvePhotoUrl(url)} alt={`Info ${idx + 1}`} className="w-full h-full object-cover rounded-sm border border-border" />
+                      <button
+                        type="button"
+                        onClick={() => setInfoPhotos((prev) => prev.filter((_, i) => i !== idx))}
+                        className="absolute -top-1.5 -right-1.5 bg-red text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+                  {infoPhotos.length < 5 && (
+                    <button
+                      type="button"
+                      onClick={() => infoPhotoRef.current?.click()}
+                      className="w-16 h-16 shrink-0 rounded-sm border-2 border-dashed border-border flex items-center justify-center bg-bg hover:border-green hover:bg-green-light transition-colors"
+                    >
+                      <Plus className="h-4 w-4 text-text-3" />
+                    </button>
+                  )}
+                </div>
+                <input ref={infoPhotoRef} type="file" accept="image/*" onChange={handleInfoPhotoUpload} className="hidden" />
+                {infoPhotos.length === 0 && (
+                  <p className="text-xs text-text-3 mt-1.5">Belum ada info photos. Maks 5 foto.</p>
+                )}
+              </div>
             </FormCard>
 
             {/* ── Fasilitas (Unified Card) ── */}
@@ -467,8 +517,8 @@ export default function MasjidFormPage() {
 
           </div>
 
-          {/* ══════════ RIGHT COLUMN (2/5 = 40%) ══════════ */}
-          <div className="lg:col-span-2 space-y-4">
+          {/* ══════════ RIGHT COLUMN (1/5 = 20%) ══════════ */}
+          <div className="lg:col-span-1 space-y-4">
 
             {/* ── Foto Utama ── */}
             <FormCard title="Foto Utama">
@@ -479,9 +529,9 @@ export default function MasjidFormPage() {
                     alt="Foto Utama"
                     className="w-full aspect-[4/3] object-cover rounded-sm border border-border"
                   />
-                  <div className="flex gap-2">
-                    <Button type="button" size="sm" onClick={() => mainPhotoRef.current?.click()} disabled={mainPhotoUploading} className="flex-1 font-semibold text-xs">
-                      <Camera className="h-3.5 w-3.5 mr-1" />{mainPhotoUploading ? 'Uploading...' : 'Upload Foto Baru'}
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button type="button" size="sm" onClick={() => mainPhotoRef.current?.click()} disabled={mainPhotoUploading} className="font-semibold text-xs">
+                      <Camera className="h-3.5 w-3.5 mr-1" />{mainPhotoUploading ? 'Uploading...' : 'Ganti Foto'}
                     </Button>
                     <Button type="button" variant="outline" size="sm" onClick={() => set('photo_url', '')} className="text-red hover:border-red text-xs">
                       <Trash2 className="h-3.5 w-3.5 mr-1" />Hapus
@@ -491,12 +541,19 @@ export default function MasjidFormPage() {
               ) : (
                 <div className="space-y-3">
                   <div className="w-full aspect-[4/3] rounded-sm border-2 border-dashed border-border flex items-center justify-center bg-bg">
-                    <div className="text-center">
-                      <Camera className="h-8 w-8 text-text-3 mx-auto mb-2" />
-                      <p className="text-xs text-text-3">Belum ada foto</p>
-                    </div>
+                    {photoDownloading ? (
+                      <div className="text-center">
+                        <Loader2 className="h-8 w-8 text-green mx-auto mb-2 animate-spin" />
+                        <p className="text-xs text-text-3">Mengunduh foto...</p>
+                      </div>
+                    ) : (
+                      <div className="text-center">
+                        <Camera className="h-8 w-8 text-text-3 mx-auto mb-2" />
+                        <p className="text-xs text-text-3">Belum ada foto</p>
+                      </div>
+                    )}
                   </div>
-                  <Button type="button" size="sm" onClick={() => mainPhotoRef.current?.click()} disabled={mainPhotoUploading} className="w-full font-semibold text-xs">
+                  <Button type="button" size="sm" onClick={() => mainPhotoRef.current?.click()} disabled={mainPhotoUploading || photoDownloading} className="w-full font-semibold text-xs">
                     <Camera className="h-3.5 w-3.5 mr-1" />{mainPhotoUploading ? 'Uploading...' : 'Upload Foto'}
                   </Button>
                 </div>
@@ -505,37 +562,6 @@ export default function MasjidFormPage() {
               <div className="mt-2">
                 <Input type="text" value={form.photo_url || ''} onChange={(e) => set('photo_url', e.target.value)} placeholder="Atau masukkan URL foto..." className="text-xs" />
               </div>
-            </FormCard>
-
-            {/* ── Info Photos ── */}
-            <FormCard title="Info Photos">
-              <div className="grid grid-cols-3 gap-2">
-                {infoPhotos.map((url, idx) => (
-                  <div key={idx} className="relative group">
-                    <img src={resolvePhotoUrl(url)} alt={`Info ${idx + 1}`} className="w-full aspect-square object-cover rounded-sm border border-border" />
-                    <button
-                      type="button"
-                      onClick={() => setInfoPhotos((prev) => prev.filter((_, i) => i !== idx))}
-                      className="absolute top-1 right-1 bg-red text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </div>
-                ))}
-                {infoPhotos.length < 5 && (
-                  <button
-                    type="button"
-                    onClick={() => infoPhotoRef.current?.click()}
-                    className="w-full aspect-square rounded-sm border-2 border-dashed border-border flex items-center justify-center bg-bg hover:border-green hover:bg-green-light transition-colors"
-                  >
-                    <Plus className="h-5 w-5 text-text-3" />
-                  </button>
-                )}
-              </div>
-              <input ref={infoPhotoRef} type="file" accept="image/*" onChange={handleInfoPhotoUpload} className="hidden" />
-              {infoPhotos.length === 0 && (
-                <p className="text-xs text-text-3 mt-2">Belum ada info photos. Maks 5 foto.</p>
-              )}
             </FormCard>
 
             {/* ── Catatan dari Jamaah ── */}
@@ -583,6 +609,7 @@ export default function MasjidFormPage() {
                   className="shrink-0 text-xs h-8"
                   onClick={() => {
                     applyPlacesResult(result);
+                    if (result.photo_ref && !form.photo_url) fetchPlacesPhoto(result.photo_ref);
                     setShowPlacesModal(false);
                     setPlacesResults([]);
                     showToast('Data dari Google Maps berhasil diisi');

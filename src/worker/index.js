@@ -1137,6 +1137,7 @@ export default {
             else if (field === 'coordinates') sql += " AND (m.latitude IS NULL OR m.longitude IS NULL)";
             else if (field === 'photo') sql += " AND (m.photo_url IS NULL OR m.photo_url = '')";
             else if (field === 'facilities') sql += " AND m.id NOT IN (SELECT DISTINCT masjid_id FROM masjid_facilities)";
+            else if (field === 'corrections') sql += " AND m.id IN (SELECT DISTINCT masjid_id FROM masjid_facilities WHERE pending_value IS NOT NULL)";
           }
         }
 
@@ -1297,6 +1298,7 @@ export default {
           google_maps_url: p.googleMapsUri || '',
           latitude: p.location?.latitude || null,
           longitude: p.location?.longitude || null,
+          photo_ref: p.photos?.[0]?.name || null,
           photo_url: null,
         }));
 
@@ -1320,6 +1322,31 @@ export default {
         }
 
         return json({ found: true, results });
+      }
+
+      // ── POST /api/places/photo ──
+      if (pathname === '/api/places/photo' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const body = await request.json();
+        if (!body.photo_ref) return json({ error: 'photo_ref required' }, 400);
+        if (!env.GOOGLE_PLACES_KEY) return json({ error: 'Google Places API key not configured' }, 500);
+
+        try {
+          const photoRes = await fetch(
+            'https://places.googleapis.com/v1/' + body.photo_ref + '/media?maxWidthPx=800&key=' + env.GOOGLE_PLACES_KEY
+          );
+          if (!photoRes.ok) return json({ error: 'Photo fetch failed' }, 502);
+
+          const contentType = photoRes.headers.get('content-type') || 'image/jpeg';
+          const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg';
+          const r2Key = 'places/' + crypto.randomUUID() + '.' + ext;
+          await env.IMAGES.put(r2Key, photoRes.body, { httpMetadata: { contentType } });
+          return json({ photo_url: 'https://masjidreview.id/images/' + r2Key });
+        } catch (e) {
+          return json({ error: 'Photo download failed' }, 500);
+        }
       }
 
       // ── PATCH /api/masjids/bulk-status ──

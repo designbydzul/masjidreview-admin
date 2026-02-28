@@ -48,6 +48,7 @@ export const uploadFile = (file, prefix) => {
 };
 
 export const searchPlaces = (name, city) => apiFetch('/api/places/search', { method: 'POST', body: JSON.stringify({ name, city }) });
+export const downloadPlacesPhoto = (photo_ref) => apiFetch('/api/places/photo', { method: 'POST', body: JSON.stringify({ photo_ref }) });
 
 // Reviews
 export const createReview = (data) => apiFetch('/api/reviews', { method: 'POST', body: JSON.stringify(data) });

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Fuse from 'fuse.js';
-import { Building2, Plus, ImageIcon, Pencil, XCircle, Search, X, Trash2, ExternalLink } from 'lucide-react';
+import { Building2, Plus, ImageIcon, Pencil, XCircle, Search, X, Trash2, ExternalLink, ChevronDown, CheckCircle2 } from 'lucide-react';
 import { getMasjids, setMasjidStatus, bulkMasjidStatus, bulkDeleteMasjids, deleteMasjid, getSimilarMasjids } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
@@ -14,7 +14,6 @@ import Pagination from '../components/Pagination';
 import usePagination from '../hooks/usePagination';
 import useClientSort from '../hooks/useClientSort';
 import { Button } from '../components/ui/button';
-import { Select } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { SkeletonTablePage } from '../components/Skeleton';
 import { resolvePhotoUrl } from '../utils/url';
@@ -26,6 +25,7 @@ const KELENGKAPAN_OPTIONS = [
   { value: 'coordinates', label: 'Belum ada Koordinat' },
   { value: 'photo', label: 'Belum ada Foto' },
   { value: 'facilities', label: 'Belum ada Fasilitas' },
+  { value: 'corrections', label: 'Ada Koreksi Fasilitas' },
 ];
 
 export default function MasjidListPage() {
@@ -45,6 +45,22 @@ export default function MasjidListPage() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [similarData, setSimilarData] = useState(null);
+
+  // Kota searchable dropdown
+  const [kotaOpen, setKotaOpen] = useState(false);
+  const [kotaSearch, setKotaSearch] = useState('');
+  const kotaRef = useRef(null);
+  const kotaSearchRef = useRef(null);
+
+  useEffect(() => {
+    if (!kotaOpen) { setKotaSearch(''); return; }
+    setTimeout(() => kotaSearchRef.current?.focus(), 50);
+    const handleClick = (e) => { if (kotaRef.current && !kotaRef.current.contains(e.target)) setKotaOpen(false); };
+    const handleKey = (e) => { if (e.key === 'Escape') setKotaOpen(false); };
+    document.addEventListener('mousedown', handleClick);
+    document.addEventListener('keydown', handleKey);
+    return () => { document.removeEventListener('mousedown', handleClick); document.removeEventListener('keydown', handleKey); };
+  }, [kotaOpen]);
 
   // Search with debounce
   const [searchValue, setSearchValue] = useState('');
@@ -186,7 +202,11 @@ export default function MasjidListPage() {
     if (row.status === 'approved') {
       items.push({ label: 'Reject', icon: XCircle, onClick: () => handleStatus(row.id, 'rejected') });
     }
-    if (admin?.role === 'super_admin') {
+    if (row.status === 'rejected') {
+      items.push({ label: 'Edit', icon: Pencil, onClick: () => navigate(`/masjids/${row.id}/edit`) });
+      items.push({ label: 'Approve', icon: CheckCircle2, onClick: () => handleStatus(row.id, 'approved') });
+    }
+    if (admin?.role === 'super_admin' && row.status !== 'rejected') {
       items.push({ label: 'Hapus', icon: Trash2, onClick: () => handleDelete(row.id, row.name), destructive: true });
     }
     return items;
@@ -297,11 +317,10 @@ export default function MasjidListPage() {
           {row.status === 'approved' && (
             <Button variant="outline" size="sm" onClick={() => navigate(`/masjids/${row.id}/edit`)}>Edit</Button>
           )}
-          {row.status === 'rejected' && (
-            <>
-              <Button size="sm" onClick={() => handleStatus(row.id, 'approved')}>Approve</Button>
-              <Button variant="outline" size="sm" onClick={() => navigate(`/masjids/${row.id}/edit`)}>Edit</Button>
-            </>
+          {row.status === 'rejected' && admin?.role === 'super_admin' && (
+            <Button variant="outline" size="sm" onClick={() => handleDelete(row.id, row.name)} className="text-red hover:border-red hover:bg-red/5">
+              <Trash2 className="h-3.5 w-3.5 mr-1" />Hapus
+            </Button>
           )}
           <ActionMenu items={buildMenuItems(row)} />
         </div>
@@ -353,17 +372,54 @@ export default function MasjidListPage() {
           </button>
         ))}
 
-        {/* Kota dropdown */}
-        <Select
-          value={cityFilter}
-          onChange={(e) => setCityFilter(e.target.value)}
-          className={cn('sm:w-[160px]', !cityFilter && 'text-text-3')}
-        >
-          <option value="">Semua Kota</option>
-          {cityOptions.map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </Select>
+        {/* Kota searchable dropdown */}
+        <div ref={kotaRef} className="relative">
+          <button
+            onClick={() => setKotaOpen((o) => !o)}
+            className={cn(
+              'flex items-center gap-1.5 h-9 px-3 rounded-sm border text-sm transition-colors whitespace-nowrap sm:w-[160px] justify-between',
+              cityFilter ? 'border-green text-green bg-green-light' : 'border-border text-text-3 bg-white hover:border-green'
+            )}
+          >
+            <span className="truncate">{cityFilter || 'Semua Kota'}</span>
+            <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 transition-transform', kotaOpen && 'rotate-180')} />
+          </button>
+          {kotaOpen && (
+            <div className="absolute left-0 top-full mt-1 w-[220px] bg-white border border-border rounded-sm shadow-lg z-20">
+              <div className="p-2 border-b border-border">
+                <input
+                  ref={kotaSearchRef}
+                  type="text"
+                  value={kotaSearch}
+                  onChange={(e) => setKotaSearch(e.target.value)}
+                  placeholder="Cari kota..."
+                  className="w-full h-8 px-2.5 text-sm border border-border rounded-sm focus:outline-none focus:border-green placeholder:text-text-3"
+                />
+              </div>
+              <div className="max-h-[240px] overflow-y-auto py-1">
+                <button
+                  onClick={() => { setCityFilter(''); setKotaOpen(false); }}
+                  className={cn('flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-bg', !cityFilter && 'text-green font-medium')}
+                >
+                  Semua Kota
+                  {!cityFilter && <CheckCircle2 className="h-3.5 w-3.5 ml-auto text-green" />}
+                </button>
+                {cityOptions
+                  .filter((opt) => !kotaSearch || opt.label.toLowerCase().includes(kotaSearch.toLowerCase()))
+                  .map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => { setCityFilter(opt.value); setKotaOpen(false); }}
+                      className={cn('flex items-center gap-2 w-full px-3 py-2 text-sm text-left hover:bg-bg', cityFilter === opt.value && 'text-green font-medium')}
+                    >
+                      {opt.label}
+                      {cityFilter === opt.value && <CheckCircle2 className="h-3.5 w-3.5 ml-auto text-green" />}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Kelengkapan multi-select */}
         <MultiSelectDropdown
