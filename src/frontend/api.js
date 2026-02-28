@@ -23,13 +23,20 @@ export const googleSignIn = (credential) => apiFetch('/auth/google', { method: '
 export const getStats = () => apiFetch('/api/stats');
 
 // Masjids
-export const getMasjids = (status) => apiFetch('/api/masjids' + (status ? '?status=' + status : ''));
+export const getMasjids = (params = {}) => {
+  const qs = new URLSearchParams();
+  if (params.status) qs.set('status', params.status);
+  if (params.missing) qs.set('missing', params.missing);
+  const q = qs.toString();
+  return apiFetch('/api/masjids' + (q ? '?' + q : ''));
+};
 export const createMasjid = (data) => apiFetch('/api/masjids', { method: 'POST', body: JSON.stringify(data) });
 export const getMasjid = (id) => apiFetch('/api/masjids/' + id);
 export const updateMasjid = (id, data) => apiFetch('/api/masjids/' + id, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteMasjid = (id) => apiFetch('/api/masjids/' + id, { method: 'DELETE' });
 export const setMasjidStatus = (id, status) => apiFetch('/api/masjids/' + id + '/status', { method: 'PATCH', body: JSON.stringify({ status }) });
 export const bulkMasjidStatus = (ids, status) => apiFetch('/api/masjids/bulk-status', { method: 'PATCH', body: JSON.stringify({ ids, status }) });
+export const bulkDeleteMasjids = (ids) => apiFetch('/api/masjids/bulk-delete', { method: 'PATCH', body: JSON.stringify({ ids }) });
 export const getSimilarMasjids = (id) => apiFetch('/api/masjids/' + id + '/similar');
 
 // Upload
@@ -82,6 +89,10 @@ export const handleFacilityCorrections = (masjidId, action) =>
   apiFetch('/api/masjids/' + masjidId + '/facility-corrections', { method: 'PATCH', body: JSON.stringify({ action }) });
 export const getFacilityNotes = (masjidId) =>
   apiFetch('/api/masjids/' + masjidId + '/facility-notes');
+export const getFacilitySuggestions = (masjidId) =>
+  apiFetch('/api/facility-suggestions?masjid_id=' + masjidId);
+export const handleFacilitySuggestion = (sugId, action) =>
+  apiFetch('/api/facility-suggestions/' + sugId, { method: 'PATCH', body: JSON.stringify({ action }) });
 
 // Changelog
 export const getChangelogs = (status) => apiFetch('/api/changelog' + (status ? '?status=' + status : ''));

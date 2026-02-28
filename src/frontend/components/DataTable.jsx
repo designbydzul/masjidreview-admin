@@ -49,12 +49,13 @@ export default function DataTable({ columns, data, selectable, selectableFilter,
             </TableHead>
           )}
           {columns.map((col) => (
-            <TableHead key={col.key}>
+            <TableHead key={col.key} className={col.align === 'right' ? 'text-right' : ''}>
               {col.sortable && onSort ? (
                 <button
                   onClick={() => onSort(col.key)}
                   className={cn(
                     'flex items-center gap-1 uppercase text-[11px] font-semibold tracking-wider transition-colors',
+                    col.align === 'right' && 'ml-auto',
                     sortConfig?.key === col.key ? 'text-green' : 'text-text-3 hover:text-text-2'
                   )}
                 >

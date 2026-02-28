@@ -1,23 +1,32 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import Fuse from 'fuse.js';
-import { Building2, Plus, ImageIcon, Pencil, XCircle, Search as SearchIcon, Trash2, ExternalLink } from 'lucide-react';
-import { getMasjids, setMasjidStatus, bulkMasjidStatus, deleteMasjid, getSimilarMasjids } from '../api';
+import { Building2, Plus, ImageIcon, Pencil, XCircle, Search, X, Trash2, ExternalLink } from 'lucide-react';
+import { getMasjids, setMasjidStatus, bulkMasjidStatus, bulkDeleteMasjids, deleteMasjid, getSimilarMasjids } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { useConfirm } from '../contexts/ConfirmContext';
 import DataTable from '../components/DataTable';
 import ActionMenu from '../components/ActionMenu';
-import BulkBar from '../components/BulkBar';
 import Badge from '../components/Badge';
-import SearchFilter, { useSearchFilter } from '../components/SearchFilter';
+import MultiSelectDropdown from '../components/MultiSelectDropdown';
 import Pagination from '../components/Pagination';
 import usePagination from '../hooks/usePagination';
 import useClientSort from '../hooks/useClientSort';
 import { Button } from '../components/ui/button';
+import { Select } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { SkeletonTablePage } from '../components/Skeleton';
 import { resolvePhotoUrl } from '../utils/url';
+import { cn } from '../lib/utils';
+
+const KELENGKAPAN_OPTIONS = [
+  { value: 'address', label: 'Belum ada Alamat' },
+  { value: 'google_maps_url', label: 'Belum ada Link Maps' },
+  { value: 'coordinates', label: 'Belum ada Koordinat' },
+  { value: 'photo', label: 'Belum ada Foto' },
+  { value: 'facilities', label: 'Belum ada Fasilitas' },
+];
 
 export default function MasjidListPage() {
   const { admin } = useAuth();
@@ -29,16 +38,29 @@ export default function MasjidListPage() {
   const [masjids, setMasjids] = useState([]);
   const [filter, setFilter] = useState(() => {
     const s = searchParams.get('status');
-    return s && ['approved', 'pending', 'rejected'].includes(s) ? s : 'all';
+    return s && ['approved', 'pending', 'rejected'].includes(s) ? s : '';
   });
+  const [cityFilter, setCityFilter] = useState('');
+  const [missingFilter, setMissingFilter] = useState([]);
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [similarData, setSimilarData] = useState(null);
-  const { search, debouncedSearch, filterValues, handleSearchChange, handleFilterChange } = useSearchFilter();
 
-  const loadData = async () => {
+  // Search with debounce
+  const [searchValue, setSearchValue] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const debounceRef = useRef(null);
+  const searchInputRef = useRef(null);
+
+  const handleSearchChange = useCallback((value) => {
+    setSearchValue(value);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => setDebouncedSearch(value), 300);
+  }, []);
+
+  const loadData = async (params = {}) => {
     try {
-      const data = await getMasjids();
+      const data = await getMasjids(params);
       setMasjids(data);
     } catch (err) {
       showToast('Gagal memuat data masjid', 'error');
@@ -47,7 +69,12 @@ export default function MasjidListPage() {
     }
   };
 
-  useEffect(() => { loadData(); }, []);
+  // Reload when missing filter changes (server-side filter)
+  useEffect(() => {
+    const params = {};
+    if (missingFilter.length > 0) params.missing = missingFilter.join(',');
+    loadData(params);
+  }, [missingFilter]);
 
   const cityOptions = useMemo(() => {
     const cities = [...new Set(masjids.map((m) => m.city).filter(Boolean))].sort();
@@ -61,58 +88,76 @@ export default function MasjidListPage() {
 
   const filtered = useMemo(() => {
     let result = masjids;
-    if (filter !== 'all') result = result.filter((m) => m.status === filter);
+    if (filter) result = result.filter((m) => m.status === filter);
     if (debouncedSearch) {
       const matchedIds = new Set(fuse.search(debouncedSearch).map((r) => r.item.id));
       result = result.filter((m) => matchedIds.has(m.id));
     }
-    if (filterValues.city) result = result.filter((m) => m.city === filterValues.city);
+    if (cityFilter) result = result.filter((m) => m.city === cityFilter);
     return result;
-  }, [masjids, fuse, filter, debouncedSearch, filterValues]);
+  }, [masjids, fuse, filter, debouncedSearch, cityFilter]);
 
   const { sortedData, sortConfig, requestSort } = useClientSort(filtered);
 
   const { currentPage, totalItems, pageSize, paginatedData, goToPage } = usePagination(
     sortedData,
-    [filter, debouncedSearch, filterValues, sortConfig]
+    [filter, debouncedSearch, cityFilter, missingFilter, sortConfig]
   );
 
-  const counts = {
-    all: masjids.length,
+  const counts = useMemo(() => ({
     approved: masjids.filter((m) => m.status === 'approved').length,
     pending: masjids.filter((m) => m.status === 'pending').length,
     rejected: masjids.filter((m) => m.status === 'rejected').length,
-  };
+  }), [masjids]);
+
+  // ── Handlers ──
 
   const handleStatus = async (id, status) => {
     try {
       await setMasjidStatus(id, status);
       showToast('Status masjid diperbarui');
       setSelectedIds(new Set());
-      loadData();
+      loadData(missingFilter.length > 0 ? { missing: missingFilter.join(',') } : {});
     } catch (err) {
       showToast(err.message, 'error');
     }
   };
 
-  const handleBulk = async (status) => {
+  const handleBulkStatus = async (status) => {
+    if (status === 'rejected') {
+      const ok = await confirm({ title: 'Tolak Masjid', message: `Yakin ingin menolak ${selectedIds.size} masjid?`, confirmLabel: 'Tolak', confirmStyle: 'red' });
+      if (!ok) return;
+    }
     try {
       await bulkMasjidStatus([...selectedIds], status);
       showToast(`${selectedIds.size} masjid di-${status}`);
       setSelectedIds(new Set());
-      loadData();
+      loadData(missingFilter.length > 0 ? { missing: missingFilter.join(',') } : {});
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    const ok = await confirm({ title: 'Hapus Masjid', message: `Yakin ingin menghapus ${selectedIds.size} masjid?`, confirmLabel: 'Hapus', confirmStyle: 'red' });
+    if (!ok) return;
+    try {
+      await bulkDeleteMasjids([...selectedIds]);
+      showToast(`${selectedIds.size} masjid dihapus`);
+      setSelectedIds(new Set());
+      loadData(missingFilter.length > 0 ? { missing: missingFilter.join(',') } : {});
     } catch (err) {
       showToast(err.message, 'error');
     }
   };
 
   const handleDelete = async (id, name) => {
-    const ok = await confirm({ title: 'Hapus Masjid', message: `Yakin hapus "${name}"? Semua review terkait juga akan dihapus.`, confirmLabel: 'Hapus', confirmStyle: 'red' });
+    const ok = await confirm({ title: 'Hapus Masjid', message: `Yakin hapus "${name}"?`, confirmLabel: 'Hapus', confirmStyle: 'red' });
     if (!ok) return;
     try {
       await deleteMasjid(id);
       showToast('Masjid dihapus');
-      loadData();
+      loadData(missingFilter.length > 0 ? { missing: missingFilter.join(',') } : {});
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -131,6 +176,8 @@ export default function MasjidListPage() {
     }
   };
 
+  // ── Three-dot menu items per status ──
+
   const buildMenuItems = (row) => {
     const items = [];
     if (row.status === 'pending') {
@@ -139,12 +186,18 @@ export default function MasjidListPage() {
     if (row.status === 'approved') {
       items.push({ label: 'Reject', icon: XCircle, onClick: () => handleStatus(row.id, 'rejected') });
     }
-    items.push({ label: 'Cek Duplikat', icon: SearchIcon, onClick: () => handleCheckSimilar(row.id) });
     if (admin?.role === 'super_admin') {
       items.push({ label: 'Hapus', icon: Trash2, onClick: () => handleDelete(row.id, row.name), destructive: true });
     }
     return items;
   };
+
+  // ── Selectable logic: pending + rejected only when their pill is active ──
+
+  const showCheckboxes = filter === 'pending' || filter === 'rejected';
+  const selectableFilter = (row) => row.status === filter;
+
+  // ── Table columns ──
 
   const columns = [
     {
@@ -152,7 +205,7 @@ export default function MasjidListPage() {
       label: 'Foto',
       render: (row) => row.photo_url
         ? <img src={resolvePhotoUrl(row.photo_url)} alt={row.name} className="w-10 h-10 rounded object-cover" />
-        : <div className="w-10 h-10 rounded bg-bg-2 flex items-center justify-center"><ImageIcon className="h-4 w-4 text-text-3" /></div>,
+        : <div className="w-10 h-10 rounded bg-bg flex items-center justify-center"><ImageIcon className="h-4 w-4 text-text-3" /></div>,
     },
     {
       key: 'name',
@@ -180,7 +233,7 @@ export default function MasjidListPage() {
                   className="text-text-3 hover:text-orange-600 shrink-0"
                   title="Cek Duplikat"
                 >
-                  <SearchIcon className="h-3.5 w-3.5" />
+                  <Search className="h-3.5 w-3.5" />
                 </button>
               ) : (
                 <a
@@ -205,9 +258,6 @@ export default function MasjidListPage() {
             </div>
             {row.status === 'pending' && row.address && (
               <p className="text-[11px] text-text-3 mt-0.5">{row.address}</p>
-            )}
-            {row.status === 'approved' && !row.address && (
-              <p className="text-[11px] text-amber-600 mt-0.5">Belum ada alamat</p>
             )}
             {missing.length > 0 && (
               <p className="text-[11px] text-amber-600 mt-0.5">
@@ -235,8 +285,9 @@ export default function MasjidListPage() {
     {
       key: 'actions',
       label: 'Aksi',
+      align: 'right',
       render: (row) => (
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center justify-end gap-1.5">
           {row.status === 'pending' && (
             <>
               <Button size="sm" onClick={() => handleStatus(row.id, 'approved')}>Approve</Button>
@@ -266,56 +317,126 @@ export default function MasjidListPage() {
         <h1 className="font-heading text-[22px] font-bold text-text">Kelola Masjid</h1>
         <Button onClick={() => navigate('/masjids/new')} className="font-semibold">
           <Plus className="h-4 w-4 mr-1" />
-          Tambah Masjid
+          Tambah
         </Button>
       </div>
 
-      <SearchFilter
-        searchPlaceholder="Cari nama masjid..."
-        searchValue={search}
-        onSearchChange={handleSearchChange}
-        filters={[
-          {
-            key: 'status',
-            label: 'Status',
-            options: [
-              { value: 'approved', label: `Approved (${counts.approved})` },
-              { value: 'pending', label: `Pending (${counts.pending})` },
-              { value: 'rejected', label: `Rejected (${counts.rejected})` },
-            ],
-            allLabel: `Semua Status (${counts.all})`,
-          },
-          { key: 'city', label: 'Kota', options: cityOptions },
-        ]}
-        filterValues={{ ...filterValues, status: filter === 'all' ? '' : filter }}
-        onFilterChange={(key, value) => {
-          if (key === 'status') {
-            setFilter(value || 'all');
-            setSelectedIds(new Set());
-          } else {
-            handleFilterChange(key, value);
-          }
-        }}
-      />
+      {/* ── Filter Bar ── */}
+      <div className="flex flex-wrap items-center gap-2 mb-4">
+        {/* Status pills */}
+        {[
+          { value: 'pending', label: 'Pending', count: counts.pending, activeClass: 'bg-orange-50 border-orange-300 text-orange-700', dotClass: 'bg-orange-500' },
+          { value: 'approved', label: 'Approved', count: counts.approved, activeClass: 'bg-emerald-50 border-emerald-300 text-emerald-700', dotClass: 'bg-emerald-500' },
+          { value: 'rejected', label: 'Rejected', count: counts.rejected, activeClass: 'bg-gray-100 border-gray-400 text-gray-700', dotClass: 'bg-gray-500' },
+        ].map((pill) => (
+          <button
+            key={pill.value}
+            onClick={() => {
+              setFilter((prev) => prev === pill.value ? '' : pill.value);
+              setSelectedIds(new Set());
+            }}
+            className={cn(
+              'inline-flex items-center gap-1.5 h-9 px-3 rounded-sm border text-sm font-medium transition-colors',
+              filter === pill.value
+                ? pill.activeClass
+                : 'bg-white border-border text-text-2 hover:border-text-3'
+            )}
+          >
+            <span className={cn('h-2 w-2 rounded-full', filter === pill.value ? pill.dotClass : 'bg-text-3')} />
+            {pill.label}
+            <span className={cn(
+              'text-xs tabular-nums',
+              filter === pill.value ? 'opacity-80' : 'text-text-3'
+            )}>
+              {pill.count}
+            </span>
+          </button>
+        ))}
 
-      <BulkBar
-        count={selectedIds.size}
-        onApprove={() => handleBulk('approved')}
-        onReject={() => handleBulk('rejected')}
-      />
+        {/* Kota dropdown */}
+        <Select
+          value={cityFilter}
+          onChange={(e) => setCityFilter(e.target.value)}
+          className={cn('sm:w-[160px]', !cityFilter && 'text-text-3')}
+        >
+          <option value="">Semua Kota</option>
+          {cityOptions.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </Select>
 
-      <DataTable
-        columns={columns}
-        data={paginatedData}
-        selectable
-        selectableFilter={(row) => row.status === 'pending'}
-        selectedIds={selectedIds}
-        onSelectionChange={setSelectedIds}
-        emptyIcon={Building2}
-        emptyText="Tidak ada masjid"
-        sortConfig={sortConfig}
-        onSort={requestSort}
-      />
+        {/* Kelengkapan multi-select */}
+        <MultiSelectDropdown
+          label="Kelengkapan"
+          options={KELENGKAPAN_OPTIONS}
+          selected={missingFilter}
+          onChange={setMissingFilter}
+        />
+
+        {/* Search input — pushed to right */}
+        <div className="relative flex-1 min-w-[180px] ml-auto max-w-xs">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-3" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchValue}
+            onChange={(e) => handleSearchChange(e.target.value)}
+            placeholder="Cari masjid..."
+            className="flex h-9 w-full rounded-sm border border-border bg-white pl-8 pr-8 py-2 text-sm transition-colors placeholder:text-text-3 focus:outline-none focus:border-green"
+          />
+          {searchValue && (
+            <button
+              onClick={() => { handleSearchChange(''); searchInputRef.current?.focus(); }}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-text-3 hover:text-text"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* ── Bulk Action Bar ── */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2.5 mb-4 bg-emerald-50 border border-emerald-200 rounded-sm">
+          <span className="text-sm font-medium text-green">{selectedIds.size} dipilih</span>
+          <div className="flex gap-2 ml-auto">
+            {filter === 'pending' && (
+              <>
+                <Button size="sm" onClick={() => handleBulkStatus('approved')} className="font-semibold">
+                  Approve
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => handleBulkStatus('rejected')} className="font-semibold hover:border-red hover:text-red">
+                  Reject
+                </Button>
+              </>
+            )}
+            {filter === 'rejected' && admin?.role === 'super_admin' && (
+              <Button size="sm" variant="destructive" onClick={handleBulkDelete} className="font-semibold">
+                <Trash2 className="h-3.5 w-3.5 mr-1" />
+                Hapus
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── Table ── */}
+      <div className="-mx-4 sm:-mx-6 lg:-mx-8">
+        <div className="px-4 sm:px-6 lg:px-8">
+          <DataTable
+            columns={columns}
+            data={paginatedData}
+            selectable={showCheckboxes}
+            selectableFilter={selectableFilter}
+            selectedIds={selectedIds}
+            onSelectionChange={setSelectedIds}
+            emptyIcon={Building2}
+            emptyText="Tidak ada masjid"
+            sortConfig={sortConfig}
+            onSort={requestSort}
+          />
+        </div>
+      </div>
 
       <Pagination
         currentPage={currentPage}

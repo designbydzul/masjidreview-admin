@@ -122,7 +122,7 @@ async function matchMasjid(name, city, env) {
   const conditions = words.map(() => "REPLACE(REPLACE(REPLACE(name, '-', ''), '''', ''), '`', '') LIKE ?");
   const baseParams = words.map(w => '%' + w + '%');
 
-  const baseSql = "SELECT id, name, city FROM masjid WHERE status = 'approved' AND (" + conditions.join(' OR ') + ")";
+  const baseSql = "SELECT id, name, city FROM masjid WHERE status = 'approved' AND is_deleted = 0 AND (" + conditions.join(' OR ') + ")";
 
   // Try with city filter first if city is provided
   if (city) {
@@ -834,10 +834,10 @@ export default {
 
         const stats = await env.DB.prepare(`
           SELECT
-            (SELECT COUNT(*) FROM masjid WHERE status = 'approved') as total_masjid,
+            (SELECT COUNT(*) FROM masjid WHERE status = 'approved' AND is_deleted = 0) as total_masjid,
             (SELECT COUNT(*) FROM reviews WHERE status = 'approved') as total_reviews,
             (SELECT COUNT(*) FROM reviews WHERE status = 'pending') as pending_reviews,
-            (SELECT COUNT(*) FROM masjid WHERE status = 'pending') as pending_masjid,
+            (SELECT COUNT(*) FROM masjid WHERE status = 'pending' AND is_deleted = 0) as pending_masjid,
             (SELECT COUNT(*) FROM users) as total_users,
             (SELECT COUNT(*) FROM users WHERE role IN ('admin', 'super_admin')) as total_admins
         `).first();
@@ -1011,11 +1011,12 @@ export default {
         const masjidId = url.searchParams.get('masjid_id');
         const status = url.searchParams.get('status');
 
-        let sql = `SELECT fs.*, f.name as facility_name, m.name as masjid_name
+        let sql = `SELECT fs.*, f.name as facility_name, m.name as masjid_name, u.name as submitted_by_name
           FROM facility_suggestions fs
           LEFT JOIN facilities f ON fs.facility_id = f.id
           JOIN masjid m ON fs.masjid_id = m.id
-          WHERE 1=1`;
+          LEFT JOIN users u ON fs.submitted_by_wa = u.wa_number
+          WHERE m.is_deleted = 0`;
         const params = [];
 
         if (masjidId) {
@@ -1119,12 +1120,26 @@ export default {
           (SELECT COUNT(*) FROM masjid_facilities mf2 WHERE mf2.masjid_id = m.id AND mf2.pending_value IS NOT NULL) as pending_corrections,
           (SELECT COUNT(*) FROM analytics_events ae WHERE ae.event_type = 'page_view' AND ae.page = '/masjids/' || m.id AND ae.created_at > datetime('now', '-30 days')) as views_30d,
           (SELECT COUNT(*) FROM reviews r WHERE r.masjid_id = m.id AND r.status = 'approved') as review_count
-        FROM masjid m`;
+        FROM masjid m WHERE m.is_deleted = 0`;
         const params = [];
         if (status) {
-          sql += ' WHERE m.status = ?';
+          sql += ' AND m.status = ?';
           params.push(status);
         }
+
+        // Kelengkapan filter: missing fields
+        const missingParam = url.searchParams.get('missing');
+        if (missingParam) {
+          const missingFields = missingParam.split(',').map(f => f.trim());
+          for (const field of missingFields) {
+            if (field === 'address') sql += " AND (m.address IS NULL OR m.address = '')";
+            else if (field === 'google_maps_url') sql += " AND (m.google_maps_url IS NULL OR m.google_maps_url = '')";
+            else if (field === 'coordinates') sql += " AND (m.latitude IS NULL OR m.longitude IS NULL)";
+            else if (field === 'photo') sql += " AND (m.photo_url IS NULL OR m.photo_url = '')";
+            else if (field === 'facilities') sql += " AND m.id NOT IN (SELECT DISTINCT masjid_id FROM masjid_facilities)";
+          }
+        }
+
         sql += " ORDER BY CASE WHEN m.status='pending' THEN 0 ELSE 1 END, m.name ASC";
 
         const stmt = params.length > 0
@@ -1189,7 +1204,7 @@ export default {
         if (!admin) return json({ error: 'Unauthorized' }, 401);
 
         const masjidId = similarMatch[1];
-        const masjid = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(masjidId).first();
+        const masjid = await env.DB.prepare('SELECT * FROM masjid WHERE id = ? AND is_deleted = 0').bind(masjidId).first();
         if (!masjid) return json({ error: 'Masjid not found' }, 404);
 
         const normalized = normalizeMasjidName(masjid.name);
@@ -1206,7 +1221,7 @@ export default {
           params.push('%' + word + '%');
         }
 
-        const sql = 'SELECT id, name, city, status FROM masjid WHERE (' + conditions.join(' OR ') + ') AND city = ? AND id != ? LIMIT 10';
+        const sql = 'SELECT id, name, city, status FROM masjid WHERE is_deleted = 0 AND (' + conditions.join(' OR ') + ') AND city = ? AND id != ? LIMIT 10';
         params.push(masjid.city, masjidId);
 
         const { results } = await env.DB.prepare(sql).bind(...params).all();
@@ -1272,22 +1287,23 @@ export default {
           body: JSON.stringify({ textQuery: body.name + ' ' + body.city, languageCode: 'id' }),
         });
         const placesData = await placesRes.json();
-        const place = placesData.places?.[0];
-        if (!place) return json({ found: false });
+        const allPlaces = placesData.places || [];
+        if (allPlaces.length === 0) return json({ found: false, results: [] });
 
-        const result = {
-          found: true,
-          result_count: placesData.places?.length || 0,
-          address: place.formattedAddress || '',
-          google_maps_url: place.googleMapsUri || '',
-          latitude: place.location?.latitude || null,
-          longitude: place.location?.longitude || null,
+        // Return up to 5 results
+        const results = allPlaces.slice(0, 5).map(p => ({
+          name: p.displayName?.text || '',
+          address: p.formattedAddress || '',
+          google_maps_url: p.googleMapsUri || '',
+          latitude: p.location?.latitude || null,
+          longitude: p.location?.longitude || null,
           photo_url: null,
-        };
+        }));
 
-        if (place.photos?.length > 0) {
+        // Download photo only for single-result case (auto-fill on load)
+        if (results.length === 1 && allPlaces[0].photos?.length > 0) {
           try {
-            const photoName = place.photos[0].name;
+            const photoName = allPlaces[0].photos[0].name;
             const photoRes = await fetch(
               'https://places.googleapis.com/v1/' + photoName + '/media?maxWidthPx=800&key=' + env.GOOGLE_PLACES_KEY
             );
@@ -1296,14 +1312,14 @@ export default {
               const ext = contentType.includes('png') ? 'png' : contentType.includes('webp') ? 'webp' : 'jpg';
               const r2Key = 'places/' + crypto.randomUUID() + '.' + ext;
               await env.IMAGES.put(r2Key, photoRes.body, { httpMetadata: { contentType } });
-              result.photo_url = 'https://masjidreview.id/images/' + r2Key;
+              results[0].photo_url = 'https://masjidreview.id/images/' + r2Key;
             }
           } catch (e) {
             // Photo fetch failed, continue without photo
           }
         }
 
-        return json(result);
+        return json({ found: true, results });
       }
 
       // ── PATCH /api/masjids/bulk-status ──
@@ -1320,9 +1336,28 @@ export default {
           return json({ error: 'Status harus approved atau rejected' }, 400);
         }
         for (let i = 0; i < ids.length; i++) {
-          await env.DB.prepare('UPDATE masjid SET status = ? WHERE id = ?').bind(status, ids[i]).run();
+          await env.DB.prepare('UPDATE masjid SET status = ? WHERE id = ? AND is_deleted = 0').bind(status, ids[i]).run();
         }
         logAudit(env, { adminId: admin.id, adminName: admin.name, action: status === 'approved' ? 'masjid_bulk_approve' : 'masjid_bulk_reject', resourceType: 'masjid', resourceId: null, resourceName: null, beforeData: { ids, count: ids.length }, afterData: { status } });
+        return json({ ok: true, updated: ids.length });
+      }
+
+      // ── PATCH /api/masjids/bulk-delete (soft delete) ──
+      if (pathname === '/api/masjids/bulk-delete' && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') {
+          return json({ error: 'Hanya super_admin yang dapat menghapus masjid' }, 403);
+        }
+        const body = await request.json();
+        const ids = body.ids;
+        if (!Array.isArray(ids) || ids.length === 0 || ids.length > 50) {
+          return json({ error: 'ids must be an array of 1-50 items' }, 400);
+        }
+        for (let i = 0; i < ids.length; i++) {
+          await env.DB.prepare('UPDATE masjid SET is_deleted = 1 WHERE id = ?').bind(ids[i]).run();
+        }
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'masjid_bulk_delete', resourceType: 'masjid', resourceId: null, resourceName: null, beforeData: { ids, count: ids.length }, afterData: { is_deleted: 1 } });
         return json({ ok: true, updated: ids.length });
       }
 
@@ -1409,22 +1444,30 @@ export default {
         // GET single
         if (request.method === 'GET') {
           const row = await env.DB.prepare(
-            'SELECT m.*, u.name as submitted_by_name, u.wa_number as submitted_by_wa FROM masjid m LEFT JOIN users u ON m.submitted_by = u.id WHERE m.id = ?'
+            'SELECT m.*, u.name as submitted_by_name, u.wa_number as submitted_by_wa, u.email as submitted_by_email FROM masjid m LEFT JOIN users u ON m.submitted_by = u.id WHERE m.id = ? AND m.is_deleted = 0'
           ).bind(masjidId).first();
           if (!row) return json({ error: 'Masjid not found' }, 404);
 
-          // Attach dynamic facilities + pending corrections
+          // Attach dynamic facilities + pending corrections (resolve submitter names)
           const { results: facRows } = await env.DB.prepare(
             'SELECT mf.facility_id, mf.value, mf.pending_value, mf.pending_submitted_by, mf.pending_created_at FROM masjid_facilities mf WHERE mf.masjid_id = ?'
           ).bind(masjidId).all();
           row.facilities = {};
           row.pending_corrections = {};
+          // Collect unique WA numbers to resolve names
+          const submitterWAs = [...new Set(facRows.filter(f => f.pending_submitted_by).map(f => f.pending_submitted_by))];
+          const submitterMap = {};
+          for (const wa of submitterWAs) {
+            const user = await env.DB.prepare('SELECT name FROM users WHERE wa_number = ?').bind(wa).first();
+            if (user) submitterMap[wa] = user.name;
+          }
           for (const f of facRows) {
             row.facilities[f.facility_id] = f.value;
             if (f.pending_value !== null && f.pending_value !== undefined) {
               row.pending_corrections[f.facility_id] = {
                 pending_value: f.pending_value,
                 submitted_by: f.pending_submitted_by,
+                submitted_by_name: submitterMap[f.pending_submitted_by] || null,
                 created_at: f.pending_created_at,
               };
             }
@@ -1456,7 +1499,7 @@ export default {
             'UPDATE masjid SET ' + setClauses.join(', ') + ' WHERE id = ?'
           ).bind(...vals).run();
 
-          // Handle dynamic facilities
+          // Handle dynamic facilities + auto-clear pending corrections
           if (body.facilities && typeof body.facilities === 'object') {
             const facBatch = [];
             for (const [facId, value] of Object.entries(body.facilities)) {
@@ -1467,7 +1510,7 @@ export default {
               } else {
                 facBatch.push(
                   env.DB.prepare(
-                    "INSERT INTO masjid_facilities (id, masjid_id, facility_id, value) VALUES (?, ?, ?, ?) ON CONFLICT(masjid_id, facility_id) DO UPDATE SET value = excluded.value"
+                    "INSERT INTO masjid_facilities (id, masjid_id, facility_id, value) VALUES (?, ?, ?, ?) ON CONFLICT(masjid_id, facility_id) DO UPDATE SET value = excluded.value, pending_value = NULL, pending_submitted_by = NULL, pending_created_at = NULL"
                   ).bind(crypto.randomUUID(), masjidId, facId, String(value))
                 );
               }
@@ -1482,14 +1525,15 @@ export default {
           return json(updated);
         }
 
-        // DELETE
+        // DELETE (soft delete)
         if (request.method === 'DELETE') {
           if (admin.role !== 'super_admin') {
             return json({ error: 'Hanya super_admin yang dapat menghapus masjid' }, 403);
           }
-          const beforeMasjid = await env.DB.prepare('SELECT id, name, city, status FROM masjid WHERE id = ?').bind(masjidId).first();
-          await env.DB.prepare('DELETE FROM masjid WHERE id = ?').bind(masjidId).run();
-          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'masjid_delete', resourceType: 'masjid', resourceId: masjidId, resourceName: beforeMasjid?.name, beforeData: beforeMasjid ? { name: beforeMasjid.name, city: beforeMasjid.city, status: beforeMasjid.status } : null, afterData: null });
+          const beforeMasjid = await env.DB.prepare('SELECT id, name, city, status FROM masjid WHERE id = ? AND is_deleted = 0').bind(masjidId).first();
+          if (!beforeMasjid) return json({ error: 'Masjid not found' }, 404);
+          await env.DB.prepare('UPDATE masjid SET is_deleted = 1 WHERE id = ?').bind(masjidId).run();
+          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'masjid_delete', resourceType: 'masjid', resourceId: masjidId, resourceName: beforeMasjid?.name, beforeData: beforeMasjid ? { name: beforeMasjid.name, city: beforeMasjid.city, status: beforeMasjid.status } : null, afterData: { is_deleted: 1 } });
           return json({ ok: true });
         }
       }
