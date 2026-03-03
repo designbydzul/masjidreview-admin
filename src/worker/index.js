@@ -1,11 +1,6 @@
 import HTML from './frontend.js';
 
-// ── Security: Allowed Origins ──
-const ALLOWED_ORIGINS = [
-  "https://masjidreview-admin.designbydzul.workers.dev"
-];
-
-function getCorsHeaders(request) {
+function getCorsHeaders(request, env) {
   const origin = request && request.headers ? request.headers.get("Origin") : null;
   const headers = {
     "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
@@ -13,7 +8,8 @@ function getCorsHeaders(request) {
     "Access-Control-Allow-Credentials": "true",
     "Vary": "Origin"
   };
-  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+  const allowed = env.CORS_ORIGIN ? env.CORS_ORIGIN.split(',').map(s => s.trim()) : [];
+  if (origin && allowed.includes(origin)) {
     headers["Access-Control-Allow-Origin"] = origin;
   }
   return headers;
@@ -33,7 +29,7 @@ const SECURITY_HEADERS = {
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { ...getCorsHeaders(json._currentRequest), ...SECURITY_HEADERS, 'Content-Type': 'application/json' },
+    headers: { ...getCorsHeaders(json._currentRequest, json._currentEnv), ...SECURITY_HEADERS, 'Content-Type': 'application/json' },
   });
 }
 
@@ -588,13 +584,14 @@ async function runMigrations(env) {
 
 export default {
   async fetch(request, env, ctx) {
-    // Store request reference for CORS origin checking in json() helper
+    // Store request/env reference for CORS origin checking in json() helper
     json._currentRequest = request;
+    json._currentEnv = env;
     const { pathname } = new URL(request.url);
 
     // Handle CORS preflight
     if (request.method === "OPTIONS") {
-      return new Response(null, { headers: { ...getCorsHeaders(request), ...SECURITY_HEADERS } });
+      return new Response(null, { headers: { ...getCorsHeaders(request, env), ...SECURITY_HEADERS } });
     }
 
     try {
@@ -715,7 +712,7 @@ export default {
             {
               status: 200,
               headers: {
-                ...getCorsHeaders(request),
+                ...getCorsHeaders(request, env),
                 ...SECURITY_HEADERS,
                 'Content-Type': 'application/json',
                 'Set-Cookie': sessionCookie(token),
@@ -739,7 +736,7 @@ export default {
         return new Response(JSON.stringify({ ok: true }), {
           status: 200,
           headers: {
-            ...getCorsHeaders(request),
+            ...getCorsHeaders(request, env),
             ...SECURITY_HEADERS,
             'Content-Type': 'application/json',
             'Set-Cookie': clearCookie(),
@@ -808,7 +805,7 @@ export default {
             {
               status: 200,
               headers: {
-                ...getCorsHeaders(request),
+                ...getCorsHeaders(request, env),
                 ...SECURITY_HEADERS,
                 'Content-Type': 'application/json',
                 'Set-Cookie': sessionCookie(token),
@@ -2475,7 +2472,7 @@ export default {
         return new Response(csv, {
           status: 200,
           headers: {
-            ...getCorsHeaders(request),
+            ...getCorsHeaders(request, env),
             ...SECURITY_HEADERS,
             'Content-Type': 'text/csv; charset=utf-8',
             'Content-Disposition': 'attachment; filename=analytics_export.csv',
