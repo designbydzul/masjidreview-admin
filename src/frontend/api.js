@@ -125,6 +125,18 @@ export const getFeedback = (params = {}) => {
 export const createFeedback = (data) => apiFetch('/api/feedback', { method: 'POST', body: JSON.stringify(data) });
 export const updateFeedback = (id, data) => apiFetch('/api/feedback/' + id, { method: 'PATCH', body: JSON.stringify(data) });
 export const deleteFeedback = (id) => apiFetch('/api/feedback/' + id, { method: 'DELETE' });
+export const setFeedbackStatus = (id, status) => apiFetch('/api/feedback/' + id + '/status', { method: 'PATCH', body: JSON.stringify({ status }) });
+export const setFeedbackGroup = (id, group_id) => apiFetch('/api/feedback/' + id + '/group', { method: 'PATCH', body: JSON.stringify({ group_id }) });
+export const createFeedbackGroup = (title) => apiFetch('/api/feedback-groups', { method: 'POST', body: JSON.stringify({ title }) });
+export const deleteFeedbackGroup = (id) => apiFetch('/api/feedback-groups/' + id, { method: 'DELETE' });
+
+// Backlog
+export const getBacklog = (status) => apiFetch('/api/backlog' + (status ? '?status=' + status : ''));
+export const createBacklogTask = (data) => apiFetch('/api/backlog', { method: 'POST', body: JSON.stringify(data) });
+export const updateBacklogTask = (id, data) => apiFetch('/api/backlog/' + id, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteBacklogTask = (id) => apiFetch('/api/backlog/' + id, { method: 'DELETE' });
+export const setBacklogTaskStatus = (id, status) => apiFetch('/api/backlog/' + id + '/status', { method: 'PATCH', body: JSON.stringify({ status }) });
+export const setBacklogTaskSort = (id, sort_order) => apiFetch('/api/backlog/' + id + '/sort', { method: 'PATCH', body: JSON.stringify({ sort_order }) });
 
 // Audit Log
 export const getAuditLogs = (params = {}) => {

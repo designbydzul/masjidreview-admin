@@ -1,41 +1,33 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Plus, Search, Trash2, Clock, Paperclip, FileText, X, Upload } from 'lucide-react';
-import {
-  DndContext,
-  DragOverlay,
-  closestCorners,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  useDroppable,
-  useDraggable,
-} from '@dnd-kit/core';
+import { Plus, Search, Trash2, Pencil, X, Upload, FileText, ArrowRightCircle, RotateCcw, MessageSquareOff, MessageSquarePlus, Link2 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
-import { getFeedback, createFeedback, updateFeedback, deleteFeedback, uploadFile, getAdmins } from '../api';
 import { useConfirm } from '../contexts/ConfirmContext';
+import { getFeedback, createFeedback, updateFeedback, deleteFeedback, uploadFile, getAdmins, setFeedbackStatus, setFeedbackGroup, createFeedbackGroup, createBacklogTask } from '../api';
+import DataTable from '../components/DataTable';
+import ActionMenu from '../components/ActionMenu';
+import ExpandableText from '../components/ExpandableText';
+import Pagination from '../components/Pagination';
+import usePagination from '../hooks/usePagination';
+import useClientSort from '../hooks/useClientSort';
 import { Button } from '../components/ui/button';
-import { Label } from '../components/ui/label';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { Input } from '../components/ui/input';
-import { Textarea } from '../components/ui/textarea';
+import { Label } from '../components/ui/label';
 import { Select } from '../components/ui/select';
+import { Textarea } from '../components/ui/textarea';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
+import { SkeletonTablePage } from '../components/Skeleton';
 import { formatDate, formatWA } from '../utils/format';
 import { cn } from '../lib/utils';
 
 // ── Constants ──
 
-const COLUMNS = [
-  { id: 'todo', label: 'Todo' },
-  { id: 'in_progress', label: 'Dikerjakan' },
-  { id: 'done', label: 'Selesai' },
+const STATUS_TABS = [
+  { key: 'baru', label: 'Baru', color: 'bg-blue-50 text-blue-700 border-blue-300' },
+  { key: 'dibahas', label: 'Dibahas', color: 'bg-amber-50 text-amber-700 border-amber-300' },
+  { key: 'dipindahkan', label: 'Dipindahkan', color: 'bg-emerald-50 text-emerald-700 border-emerald-300' },
+  { key: 'ditolak', label: 'Ditolak', color: 'bg-gray-100 text-gray-600 border-gray-300' },
 ];
-
-const STATUS_CONFIG = {
-  todo: { label: 'Todo', className: 'bg-gray-100 text-gray-700 border-gray-300' },
-  in_progress: { label: 'Dikerjakan', className: 'bg-blue-50 text-blue-700 border-blue-300' },
-  done: { label: 'Selesai', className: 'bg-emerald-50 text-emerald-700 border-emerald-300' },
-};
 
 const CATEGORY_CONFIG = {
   bug: { label: 'Bug', className: 'bg-rose-50 text-rose-700 border-rose-200' },
@@ -65,7 +57,7 @@ const TYPE_ACTIVE = {
   idea: 'bg-purple-50 text-purple-700 border-purple-300',
 };
 
-// ── Inline Badge Helpers ──
+// ── Badge Helpers ──
 
 function TypeBadge({ type }) {
   const config = TYPE_CONFIG[type] || TYPE_CONFIG.feedback;
@@ -87,7 +79,7 @@ function CategoryBadge({ category }) {
 
 function PriorityBadge({ priority }) {
   const config = PRIORITY_CONFIG[priority];
-  if (!config) return null;
+  if (!config) return <span className="text-text-3 text-xs">-</span>;
   return (
     <span className={cn('inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full border', config.className)}>
       {config.label}
@@ -95,132 +87,158 @@ function PriorityBadge({ priority }) {
   );
 }
 
-// ── Draggable Card ──
-
-function FeedbackCard({ item, isDraggable = false, isDragOverlay = false, onClick, onStatusChange, isSuperAdmin }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
-    id: item.id,
-    disabled: !isDraggable,
-  });
-
-  const style = transform
-    ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` }
-    : undefined;
-
-  const attachments = (() => { try { return JSON.parse(item.attachments || '[]'); } catch { return []; } })();
-  const isOverdue = item.due_date && item.status !== 'done' && new Date(item.due_date) < new Date();
-
+function StatusBadge({ status }) {
+  const tab = STATUS_TABS.find((t) => t.key === status);
+  if (!tab) return <span className="text-text-3 text-xs">{status}</span>;
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      {...(isDraggable ? { ...listeners, ...attributes } : {})}
-      onClick={onClick}
-      className={cn(
-        'bg-white border border-border rounded-sm p-3 cursor-pointer hover:border-green transition-colors',
-        isDragging && 'opacity-40',
-        isDragOverlay && 'shadow-lg rotate-[2deg] border-green',
-        isDraggable && 'cursor-grab active:cursor-grabbing'
-      )}
-    >
-      <div className="flex items-center gap-1.5 mb-2 flex-wrap">
-        <TypeBadge type={item.type || 'feedback'} />
-        <CategoryBadge category={item.category} />
-        {item.priority && <PriorityBadge priority={item.priority} />}
-      </div>
-      <p className="text-sm text-text mb-2 line-clamp-2">{item.message}</p>
-
-      {/* Metadata indicators */}
-      {(item.due_date || item.assigned_to_name || attachments.length > 0) && (
-        <div className="flex items-center gap-2.5 mb-2 flex-wrap">
-          {item.due_date && (
-            <span className={cn('flex items-center gap-1 text-[11px]', isOverdue ? 'text-rose-600 font-medium' : 'text-text-3')}>
-              <Clock className="h-3 w-3" />
-              {new Date(item.due_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
-            </span>
-          )}
-          {item.assigned_to_name && (
-            <span className="text-[11px] text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded-full font-medium">
-              {item.assigned_to_name}
-            </span>
-          )}
-          {attachments.length > 0 && (
-            <span className="flex items-center gap-0.5 text-[11px] text-text-3">
-              <Paperclip className="h-3 w-3" />
-              {attachments.length}
-            </span>
-          )}
-        </div>
-      )}
-
-      <div className="flex items-center justify-between text-xs text-text-3">
-        <span>{item.name || 'Anonim'}</span>
-        <span>{formatDate(item.created_at)}</span>
-      </div>
-
-      {/* Quick status buttons */}
-      {isSuperAdmin && !isDragOverlay && (
-        <div className="flex gap-1 mt-2 pt-2 border-t border-border">
-          {COLUMNS.map((col) => (
-            <button
-              key={col.id}
-              type="button"
-              onClick={(e) => { e.stopPropagation(); if (item.status !== col.id) onStatusChange(item.id, col.id); }}
-              className={cn(
-                'flex-1 text-[10px] font-medium py-1 rounded border transition-colors',
-                item.status === col.id
-                  ? STATUS_CONFIG[col.id].className
-                  : 'bg-white text-text-3 border-border hover:border-green hover:text-green'
-              )}
-            >
-              {col.label}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <span className={cn('inline-block text-[11px] font-semibold px-2 py-0.5 rounded-full border', tab.color)}>
+      {tab.label}
+    </span>
   );
 }
 
-// ── Droppable Column ──
+// ── Promote to Backlog Dialog ──
 
-function KanbanColumn({ column, isSuperAdmin, onCardClick, onStatusChange }) {
-  const { setNodeRef, isOver } = useDroppable({ id: column.id });
+function PromoteBacklogDialog({ item, open, onOpenChange, onSuccess }) {
+  const { showToast } = useToast();
+  const [form, setForm] = useState({ title: '', category: '', priority: '' });
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (item && open) {
+      setForm({
+        title: (item.message || '').slice(0, 80),
+        category: item.category || 'umum',
+        priority: item.priority || 'medium',
+      });
+    }
+  }, [item, open]);
+
+  const handleSubmit = async () => {
+    if (!form.title.trim()) {
+      showToast('Judul wajib diisi', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      await createBacklogTask({
+        title: form.title.trim(),
+        category: form.category,
+        priority: form.priority,
+        source_feedback_id: item.id,
+      });
+      showToast('Dipindahkan ke Backlog');
+      onOpenChange(false);
+      onSuccess();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
-    <div
-      ref={setNodeRef}
-      className={cn(
-        'flex-shrink-0 w-[260px] bg-bg rounded-sm border border-border flex flex-col',
-        isOver && 'border-green bg-green-light'
-      )}
-    >
-      <div className="px-3 py-2.5 border-b border-border flex items-center justify-between">
-        <span className="text-sm font-semibold text-text">{column.label}</span>
-        <span className="text-xs font-medium text-text-3 bg-border-2 px-1.5 py-0.5 rounded-full">
-          {column.items.length}
-        </span>
-      </div>
-      <div className="flex-1 overflow-y-auto p-2 space-y-2">
-        {column.items.map((item) => (
-          <FeedbackCard
-            key={item.id}
-            item={item}
-            isDraggable={isSuperAdmin}
-            isSuperAdmin={isSuperAdmin}
-            onClick={() => onCardClick(item)}
-            onStatusChange={onStatusChange}
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[440px]">
+        <DialogHeader>
+          <DialogTitle>Pindahkan ke Backlog</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div>
+            <Label className="text-xs text-text-3 mb-1.5 block">Judul Task *</Label>
+            <Input
+              value={form.title}
+              onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
+              placeholder="Judul task..."
+            />
+          </div>
+          <div>
+            <Label className="text-xs text-text-3 mb-1.5 block">Kategori</Label>
+            <Select value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}>
+              {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => (
+                <option key={key} value={key}>{cfg.label}</option>
+              ))}
+            </Select>
+          </div>
+          <div>
+            <Label className="text-xs text-text-3 mb-1.5 block">Prioritas</Label>
+            <Select value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value }))}>
+              {Object.entries(PRIORITY_CONFIG).map(([key, cfg]) => (
+                <option key={key} value={key}>{cfg.label}</option>
+              ))}
+            </Select>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Batal</Button>
+          <Button onClick={handleSubmit} disabled={saving}>
+            {saving ? 'Memproses...' : 'Pindahkan'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Gabungkan (Group) Dialog ──
+
+function GroupDialog({ selectedIds, open, onOpenChange, onSuccess }) {
+  const { showToast } = useToast();
+  const [title, setTitle] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (open) setTitle('');
+  }, [open]);
+
+  const handleSubmit = async () => {
+    if (!title.trim()) {
+      showToast('Nama grup wajib diisi', 'error');
+      return;
+    }
+    setSaving(true);
+    try {
+      const group = await createFeedbackGroup(title.trim());
+      for (const id of selectedIds) {
+        await setFeedbackGroup(id, group.id);
+      }
+      showToast(`${selectedIds.size} feedback digabungkan`);
+      onOpenChange(false);
+      onSuccess();
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[400px]">
+        <DialogHeader>
+          <DialogTitle>Gabungkan {selectedIds.size} Feedback</DialogTitle>
+        </DialogHeader>
+        <div>
+          <Label className="text-xs text-text-3 mb-1.5 block">Nama Grup *</Label>
+          <Input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Nama grup feedback..."
+            autoFocus
           />
-        ))}
-        {column.items.length === 0 && (
-          <p className="text-center text-text-3 text-xs py-8">Kosong</p>
-        )}
-      </div>
-    </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Batal</Button>
+          <Button onClick={handleSubmit} disabled={saving}>
+            {saving ? 'Memproses...' : 'Gabungkan'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-// ── Detail Dialog (fully editable for super_admin) ──
+// ── Detail Dialog ──
 
 function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate, onDelete, admins }) {
   const { showToast } = useToast();
@@ -322,6 +340,8 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
     }
   };
 
+  if (!item) return null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[540px]">
@@ -406,19 +426,11 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <Label className="text-xs text-text-3 mb-1.5 block">Nama</Label>
-                <Input
-                  value={editForm.name}
-                  onChange={(e) => updateField('name', e.target.value)}
-                  placeholder="Nama pengirim"
-                />
+                <Input value={editForm.name} onChange={(e) => updateField('name', e.target.value)} placeholder="Nama pengirim" />
               </div>
               <div>
                 <Label className="text-xs text-text-3 mb-1.5 block">WhatsApp</Label>
-                <Input
-                  value={editForm.wa_number}
-                  onChange={(e) => updateField('wa_number', e.target.value)}
-                  placeholder="08xxxxxxxxxx"
-                />
+                <Input value={editForm.wa_number} onChange={(e) => updateField('wa_number', e.target.value)} placeholder="08xxxxxxxxxx" />
               </div>
             </div>
           ) : (
@@ -434,7 +446,7 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
             </div>
           )}
 
-          {/* Date + Status (read-only for non-super_admin) */}
+          {/* Date + Status (read-only) */}
           {!isSuperAdmin && (
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div>
@@ -443,12 +455,11 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
               </div>
               <div>
                 <span className="text-text-3 text-xs block">Status</span>
-                <span className="text-text">{COLUMNS.find((c) => c.id === item.status)?.label || item.status}</span>
+                <StatusBadge status={item.status} />
               </div>
             </div>
           )}
 
-          {/* Date (always shown for super_admin too) */}
           {isSuperAdmin && (
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Tanggal</Label>
@@ -456,7 +467,7 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
             </div>
           )}
 
-          {/* Priority (super_admin editable) */}
+          {/* Priority */}
           {isSuperAdmin && (
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Prioritas</Label>
@@ -557,13 +568,7 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
                   onChange={handleAttachmentUpload}
                   className="hidden"
                 />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={uploading}
-                >
+                <Button type="button" variant="outline" size="sm" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
                   <Upload className="h-3.5 w-3.5 mr-1.5" />
                   {uploading ? 'Mengupload...' : 'Upload Lampiran'}
                 </Button>
@@ -575,25 +580,25 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
             )}
           </div>
 
-          {/* Status (super_admin editable) */}
+          {/* Status */}
           {isSuperAdmin && (
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Status</Label>
               <div className="flex flex-wrap gap-2">
-                {COLUMNS.map((col) => (
+                {STATUS_TABS.map((tab) => (
                   <button
-                    key={col.id}
+                    key={tab.key}
                     type="button"
-                    onClick={() => updateField('status', col.id)}
+                    onClick={() => updateField('status', tab.key)}
                     disabled={saving}
                     className={cn(
                       'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
-                      editForm.status === col.id
-                        ? 'bg-green-light text-green border-green'
+                      editForm.status === tab.key
+                        ? tab.color
                         : 'bg-white text-text-2 border-border hover:border-green'
                     )}
                   >
-                    {col.label}
+                    {tab.label}
                   </button>
                 ))}
               </div>
@@ -608,9 +613,7 @@ function FeedbackDetailDialog({ item, open, onOpenChange, isSuperAdmin, onUpdate
               Hapus
             </Button>
             <div className="flex gap-2">
-              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-                Batal
-              </Button>
+              <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Batal</Button>
               <Button onClick={handleSave} disabled={saving}>
                 {saving ? 'Menyimpan...' : 'Simpan'}
               </Button>
@@ -631,14 +634,16 @@ export default function FeedbackPage() {
 
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeCard, setActiveCard] = useState(null);
-  const [selectedItem, setSelectedItem] = useState(null);
-  const [typeFilter, setTypeFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [selectedItem, setSelectedItem] = useState(null);
+  const [promoteItem, setPromoteItem] = useState(null);
+  const [showGroupDialog, setShowGroupDialog] = useState(false);
 
   // Create dialog state
   const [showCreateDialog, setShowCreateDialog] = useState(false);
-  const [form, setForm] = useState({ type: 'feedback', category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo', due_date: '', assigned_to: '' });
+  const [form, setForm] = useState({ type: 'feedback', category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'baru', due_date: '', assigned_to: '' });
   const [errors, setErrors] = useState({});
   const [saving, setSaving] = useState(false);
 
@@ -649,10 +654,6 @@ export default function FeedbackPage() {
     if (isSuperAdmin) getAdmins().then(setAdmins).catch(() => {});
   }, [isSuperAdmin]);
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
-  );
-
   const fetchItems = useCallback(() => {
     setLoading(true);
     getFeedback()
@@ -661,80 +662,45 @@ export default function FeedbackPage() {
       .finally(() => setLoading(false));
   }, [showToast]);
 
-  useEffect(() => {
-    fetchItems();
-  }, [fetchItems]);
+  useEffect(() => { fetchItems(); }, [fetchItems]);
 
-  const typeTabs = useMemo(() => [
-    { key: 'all', label: 'Semua', count: items.length },
-    { key: 'feedback', label: 'Feedback', count: items.filter((i) => (i.type || 'feedback') === 'feedback').length },
-    { key: 'idea', label: 'Idea', count: items.filter((i) => (i.type || 'feedback') === 'idea').length },
-  ], [items]);
+  const counts = useMemo(() => {
+    const c = { all: items.length, baru: 0, dibahas: 0, dipindahkan: 0, ditolak: 0 };
+    items.forEach((i) => { if (c[i.status] !== undefined) c[i.status]++; });
+    return c;
+  }, [items]);
 
-  const columns = useMemo(() => {
-    let filtered = typeFilter === 'all'
-      ? items
-      : items.filter((item) => (item.type || 'feedback') === typeFilter);
-
+  const filtered = useMemo(() => {
+    let result = items;
+    if (statusFilter !== 'all') result = result.filter((i) => i.status === statusFilter);
     if (searchQuery.trim()) {
       const q = searchQuery.trim().toLowerCase();
-      filtered = filtered.filter((item) =>
-        item.message?.toLowerCase().includes(q) ||
-        item.name?.toLowerCase().includes(q) ||
-        item.category?.toLowerCase().includes(q)
+      result = result.filter((i) =>
+        i.message?.toLowerCase().includes(q) ||
+        i.name?.toLowerCase().includes(q) ||
+        i.category?.toLowerCase().includes(q)
       );
     }
+    return result;
+  }, [items, statusFilter, searchQuery]);
 
-    return COLUMNS.map((col) => ({
-      ...col,
-      items: filtered
-        .filter((item) => item.status === col.id)
-        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at)),
-    }));
-  }, [items, typeFilter, searchQuery]);
+  const { sortedData, sortConfig, requestSort } = useClientSort(filtered);
+  const { currentPage, totalItems, pageSize, paginatedData, goToPage } = usePagination(sortedData, [statusFilter, searchQuery, sortConfig]);
 
-  const handleDragStart = (event) => {
-    const item = items.find((i) => i.id === event.active.id);
-    setActiveCard(item || null);
-  };
-
-  const handleDragEnd = async (event) => {
-    const { active, over } = event;
-    setActiveCard(null);
-
-    if (!over) return;
-
-    const feedbackId = active.id;
-    const newStatus = over.id;
-
-    const item = items.find((i) => i.id === feedbackId);
-    if (!item || item.status === newStatus) return;
-
-    // Check the drop target is a valid column
-    if (!COLUMNS.some((c) => c.id === newStatus)) return;
-
-    // Optimistic update
-    const prevItems = [...items];
-    setItems((prev) => prev.map((i) => (i.id === feedbackId ? { ...i, status: newStatus } : i)));
-
+  const handleStatusChange = async (id, newStatus) => {
     try {
-      await updateFeedback(feedbackId, { status: newStatus });
+      await setFeedbackStatus(id, newStatus);
       showToast('Status diperbarui');
+      fetchItems();
     } catch (err) {
-      setItems(prevItems);
       showToast(err.message, 'error');
     }
-  };
-
-  const handleItemUpdate = (updated) => {
-    setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
-    setSelectedItem(null);
   };
 
   const handleDelete = async (item) => {
     const ok = await confirm({
       title: 'Hapus Feedback',
-      message: `Yakin ingin menghapus feedback dari "${item.name || 'Anonim'}"? Tindakan ini tidak dapat dibatalkan.`,
+      message: `Yakin ingin menghapus feedback dari "${item.name || 'Anonim'}"?`,
       confirmLabel: 'Hapus',
       confirmStyle: 'destructive',
     });
@@ -749,20 +715,102 @@ export default function FeedbackPage() {
     }
   };
 
-  const handleQuickStatusChange = async (feedbackId, newStatus) => {
-    const prevItems = [...items];
-    setItems((prev) => prev.map((i) => (i.id === feedbackId ? { ...i, status: newStatus } : i)));
-    try {
-      await updateFeedback(feedbackId, { status: newStatus });
-      showToast('Status diperbarui');
-    } catch (err) {
-      setItems(prevItems);
-      showToast(err.message, 'error');
-    }
+  const handleItemUpdate = (updated) => {
+    setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
+    setSelectedItem(null);
   };
 
+  const buildMenuItems = (row) => {
+    const menuItems = [];
+    if (row.status === 'baru') {
+      menuItems.push({ label: 'Tandai Dibahas', icon: MessageSquarePlus, onClick: () => handleStatusChange(row.id, 'dibahas') });
+    }
+    if (row.status === 'dibahas') {
+      menuItems.push({ label: 'Tandai Baru', icon: RotateCcw, onClick: () => handleStatusChange(row.id, 'baru') });
+    }
+    if (row.status === 'baru' || row.status === 'dibahas') {
+      menuItems.push({ label: 'Edit', icon: Pencil, onClick: () => setSelectedItem(row) });
+    }
+    if (row.status === 'ditolak') {
+      menuItems.push({ label: 'Pulihkan', icon: RotateCcw, onClick: () => handleStatusChange(row.id, 'baru') });
+    }
+    if (isSuperAdmin) {
+      menuItems.push({ label: 'Hapus', icon: Trash2, onClick: () => handleDelete(row), destructive: true });
+    }
+    return menuItems;
+  };
+
+  const columns = [
+    {
+      key: 'created_at', label: 'Tanggal', sortable: true,
+      render: (row) => <span className="text-text-3 text-xs whitespace-nowrap">{formatDate(row.created_at)}</span>,
+    },
+    {
+      key: 'category', label: 'Kategori',
+      render: (row) => <CategoryBadge category={row.category} />,
+    },
+    {
+      key: 'message', label: 'Pesan',
+      render: (row) => (
+        <div>
+          <ExpandableText text={row.message} maxLen={120} />
+          {row.group_id && row.group_title && (
+            <span className="ml-1.5 inline-block text-[10px] font-semibold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200">
+              <Link2 className="h-2.5 w-2.5 inline mr-0.5" />
+              {row.group_title}
+            </span>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'name', label: 'Sumber', sortable: true,
+      render: (row) => (
+        <div className="flex items-center gap-1.5">
+          <span className="text-sm">{row.name || 'Anonim'}</span>
+          <TypeBadge type={row.type || 'feedback'} />
+        </div>
+      ),
+    },
+    {
+      key: 'priority', label: 'Prioritas',
+      render: (row) => <PriorityBadge priority={row.priority} />,
+    },
+    {
+      key: 'status', label: 'Status',
+      render: (row) => <StatusBadge status={row.status} />,
+    },
+    {
+      key: 'actions', label: 'Aksi',
+      render: (row) => {
+        if (row.status === 'dipindahkan') {
+          return <StatusBadge status="dipindahkan" />;
+        }
+        if (row.status === 'ditolak') {
+          return (
+            <div className="flex items-center gap-1.5">
+              <ActionMenu items={buildMenuItems(row)} />
+            </div>
+          );
+        }
+        return (
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" onClick={() => setPromoteItem(row)}>
+              <ArrowRightCircle className="h-3.5 w-3.5 mr-1" />
+              Backlog
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => handleStatusChange(row.id, 'ditolak')} className="hover:border-red hover:text-red">
+              Tolak
+            </Button>
+            <ActionMenu items={buildMenuItems(row)} />
+          </div>
+        );
+      },
+    },
+  ];
+
   const openCreateDialog = () => {
-    setForm({ type: 'feedback', category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'todo', due_date: '', assigned_to: '' });
+    setForm({ type: 'feedback', category: 'umum', message: '', name: '', wa_number: '', priority: '', status: 'baru', due_date: '', assigned_to: '' });
     setErrors({});
     setShowCreateDialog(true);
   };
@@ -795,52 +843,52 @@ export default function FeedbackPage() {
     }
   };
 
-  if (loading) {
-    return (
-      <div className="p-6">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-border-2 rounded w-48" />
-          <div className="flex gap-4 overflow-x-auto">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <div key={i} className="flex-shrink-0 w-[260px] bg-border-2 rounded-sm h-[400px]" />
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <SkeletonTablePage columns={7} hasButton />;
 
   return (
-    <div className="p-6 flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
-      <div className="flex items-center justify-between mb-4 flex-shrink-0">
-        <h1 className="font-heading font-bold text-xl text-text">Feedback Hub</h1>
-        <Button onClick={() => openCreateDialog()}>
-          <Plus className="h-4 w-4 mr-1.5" />
+    <div>
+      {/* Header */}
+      <div className="flex items-center justify-between mb-5">
+        <h1 className="font-heading text-[22px] font-bold text-text">Feedback Hub</h1>
+        <Button onClick={openCreateDialog} className="font-semibold">
+          <Plus className="h-4 w-4 mr-1" />
           Tambah
         </Button>
       </div>
 
-      <div className="flex items-center justify-between flex-shrink-0 mb-4">
-        <div className="flex gap-2">
-          {typeTabs.map((tab) => {
-            const isActive = tab.key === typeFilter;
+      {/* Status tabs + Search */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex gap-2 flex-wrap">
+          <button
+            onClick={() => { setStatusFilter('all'); setSelectedIds(new Set()); }}
+            className={cn(
+              'flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-full border whitespace-nowrap transition-colors',
+              statusFilter === 'all'
+                ? 'bg-green text-white border-green'
+                : 'bg-white text-text-2 border-border hover:border-green hover:text-green'
+            )}
+          >
+            Semua
+            <span className={cn('text-[11px] font-bold px-1.5 py-0 rounded-full', statusFilter === 'all' ? 'bg-white/25 text-white' : 'bg-border-2 text-text-3')}>
+              {counts.all}
+            </span>
+          </button>
+          {STATUS_TABS.map((tab) => {
+            const isActive = statusFilter === tab.key;
             return (
               <button
                 key={tab.key}
-                onClick={() => setTypeFilter(tab.key)}
+                onClick={() => { setStatusFilter(tab.key); setSelectedIds(new Set()); }}
                 className={cn(
                   'flex items-center gap-1.5 px-3.5 py-2 text-sm font-medium rounded-full border whitespace-nowrap transition-colors',
                   isActive
-                    ? 'bg-green text-white border-green'
+                    ? tab.color
                     : 'bg-white text-text-2 border-border hover:border-green hover:text-green'
                 )}
               >
                 {tab.label}
-                <span className={cn(
-                  'text-[11px] font-bold px-1.5 py-0 rounded-full',
-                  isActive ? 'bg-white/25 text-white' : 'bg-border-2 text-text-3'
-                )}>
-                  {tab.count}
+                <span className={cn('text-[11px] font-bold px-1.5 py-0 rounded-full', isActive ? 'bg-black/10 text-inherit' : 'bg-border-2 text-text-3')}>
+                  {counts[tab.key]}
                 </span>
               </button>
             );
@@ -857,36 +905,46 @@ export default function FeedbackPage() {
         </div>
       </div>
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCorners}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
-        <div className="flex gap-4 overflow-x-auto flex-1 min-h-0 pb-2">
-          {columns.map((col) => (
-            <KanbanColumn
-              key={col.id}
-              column={col}
-              isSuperAdmin={isSuperAdmin}
-              onCardClick={setSelectedItem}
-              onStatusChange={handleQuickStatusChange}
-            />
-          ))}
+      {/* Bulk bar */}
+      {selectedIds.size > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2.5 mb-4 bg-emerald-50 border border-emerald-200 rounded-sm">
+          <span className="text-sm font-medium text-green">{selectedIds.size} dipilih</span>
+          <div className="flex gap-2 ml-auto">
+            <Button size="sm" onClick={() => setShowGroupDialog(true)} className="font-semibold">
+              <Link2 className="h-3.5 w-3.5 mr-1" />
+              Gabungkan
+            </Button>
+          </div>
         </div>
+      )}
 
-        <DragOverlay>
-          {activeCard ? <FeedbackCard item={activeCard} isDragOverlay /> : null}
-        </DragOverlay>
-      </DndContext>
+      {/* Table */}
+      <DataTable
+        columns={columns}
+        data={paginatedData}
+        selectable
+        selectableFilter={(row) => row.status === 'baru' || row.status === 'dibahas'}
+        selectedIds={selectedIds}
+        onSelectionChange={setSelectedIds}
+        emptyIcon={MessageSquareOff}
+        emptyText="Tidak ada feedback"
+        sortConfig={sortConfig}
+        onSort={requestSort}
+      />
 
+      <Pagination
+        currentPage={currentPage}
+        totalItems={totalItems}
+        pageSize={pageSize}
+        onPageChange={goToPage}
+      />
+
+      {/* Detail dialog */}
       {selectedItem && (
         <FeedbackDetailDialog
           item={selectedItem}
           open={!!selectedItem}
-          onOpenChange={(open) => {
-            if (!open) setSelectedItem(null);
-          }}
+          onOpenChange={(open) => { if (!open) setSelectedItem(null); }}
           isSuperAdmin={isSuperAdmin}
           onUpdate={handleItemUpdate}
           onDelete={handleDelete}
@@ -894,7 +952,23 @@ export default function FeedbackPage() {
         />
       )}
 
-      {/* ── Create Dialog ── */}
+      {/* Promote to Backlog dialog */}
+      <PromoteBacklogDialog
+        item={promoteItem}
+        open={!!promoteItem}
+        onOpenChange={(open) => { if (!open) setPromoteItem(null); }}
+        onSuccess={() => { setPromoteItem(null); fetchItems(); }}
+      />
+
+      {/* Group dialog */}
+      <GroupDialog
+        selectedIds={selectedIds}
+        open={showGroupDialog}
+        onOpenChange={setShowGroupDialog}
+        onSuccess={() => { setSelectedIds(new Set()); setShowGroupDialog(false); fetchItems(); }}
+      />
+
+      {/* Create Dialog */}
       <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
         <DialogContent className="max-w-[540px]">
           <DialogHeader>
@@ -902,7 +976,6 @@ export default function FeedbackPage() {
           </DialogHeader>
 
           <div className="space-y-4">
-            {/* Type */}
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Tipe</Label>
               <div className="flex gap-2">
@@ -924,7 +997,6 @@ export default function FeedbackPage() {
               </div>
             </div>
 
-            {/* Category */}
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Kategori</Label>
               <div className="flex gap-2">
@@ -946,7 +1018,6 @@ export default function FeedbackPage() {
               </div>
             </div>
 
-            {/* Message */}
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Pesan *</Label>
               <Textarea
@@ -958,27 +1029,16 @@ export default function FeedbackPage() {
               {errors.message && <p className="text-xs text-rose-600 mt-1">{errors.message}</p>}
             </div>
 
-            {/* Name */}
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Nama (opsional)</Label>
-              <Input
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                placeholder="Nama pengirim"
-              />
+              <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Nama pengirim" />
             </div>
 
-            {/* WA Number */}
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">No. WhatsApp (opsional)</Label>
-              <Input
-                value={form.wa_number}
-                onChange={(e) => setForm((f) => ({ ...f, wa_number: e.target.value }))}
-                placeholder="08xxxxxxxxxx"
-              />
+              <Input value={form.wa_number} onChange={(e) => setForm((f) => ({ ...f, wa_number: e.target.value }))} placeholder="08xxxxxxxxxx" />
             </div>
 
-            {/* Priority */}
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Prioritas (opsional)</Label>
               <div className="flex gap-2">
@@ -1000,29 +1060,27 @@ export default function FeedbackPage() {
               </div>
             </div>
 
-            {/* Status */}
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Status</Label>
               <div className="flex flex-wrap gap-2">
-                {COLUMNS.map((col) => (
+                {STATUS_TABS.map((tab) => (
                   <button
-                    key={col.id}
+                    key={tab.key}
                     type="button"
-                    onClick={() => setForm((f) => ({ ...f, status: col.id }))}
+                    onClick={() => setForm((f) => ({ ...f, status: tab.key }))}
                     className={cn(
                       'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
-                      form.status === col.id
-                        ? 'bg-green-light text-green border-green'
+                      form.status === tab.key
+                        ? tab.color
                         : 'bg-white text-text-2 border-border hover:border-green'
                     )}
                   >
-                    {col.label}
+                    {tab.label}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Due Date (create) */}
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Tenggat Waktu (opsional)</Label>
               <input
@@ -1033,7 +1091,6 @@ export default function FeedbackPage() {
               />
             </div>
 
-            {/* Assigned To (create) */}
             {isSuperAdmin && admins.length > 0 && (
               <div>
                 <Label className="text-xs text-text-3 mb-1.5 block">Ditugaskan ke (opsional)</Label>
@@ -1048,9 +1105,7 @@ export default function FeedbackPage() {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowCreateDialog(false)} disabled={saving}>
-              Batal
-            </Button>
+            <Button variant="outline" onClick={() => setShowCreateDialog(false)} disabled={saving}>Batal</Button>
             <Button onClick={handleCreate} disabled={saving}>
               {saving ? 'Menyimpan...' : 'Simpan'}
             </Button>
