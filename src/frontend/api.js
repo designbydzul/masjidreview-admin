@@ -1,3 +1,7 @@
+import { toast } from 'sonner';
+
+let isRedirectingTo401 = false;
+
 async function apiFetch(path, options = {}) {
   const res = await fetch(path, {
     ...options,
@@ -7,6 +11,14 @@ async function apiFetch(path, options = {}) {
     },
     credentials: 'same-origin',
   });
+  if (res.status === 401 && path !== '/auth/me') {
+    if (!isRedirectingTo401) {
+      isRedirectingTo401 = true;
+      toast.error('Sesi Anda telah berakhir. Silakan login kembali.');
+      setTimeout(() => { window.location.href = '/login'; }, 1500);
+    }
+    throw new Error('Unauthorized');
+  }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Request failed');
   return data;
