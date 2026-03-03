@@ -929,6 +929,7 @@ export default {
       if (pathname === '/api/facilities' && request.method === 'POST') {
         const admin = await getSession(request, env);
         if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') return json({ error: 'Forbidden' }, 403);
 
         const body = await request.json();
         if (!body.name || !body.grp || !body.input_type) {
@@ -993,9 +994,7 @@ export default {
 
         // DELETE
         if (request.method === 'DELETE') {
-          if (admin.role !== 'super_admin') {
-            return json({ error: 'Hanya super_admin yang dapat menghapus fasilitas' }, 403);
-          }
+          if (admin.role !== 'super_admin') return json({ error: 'Forbidden' }, 403);
           await env.DB.prepare('DELETE FROM masjid_facilities WHERE facility_id = ?').bind(facId).run();
           await env.DB.prepare('DELETE FROM facilities WHERE id = ?').bind(facId).run();
           return json({ ok: true });
