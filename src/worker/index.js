@@ -870,6 +870,7 @@ export default {
         const sort_order = (maxOrder?.max_order ?? -1) + 1;
         await env.DB.prepare('INSERT INTO facility_groups (grp, label, sort_order) VALUES (?, ?, ?)').bind(grp, body.label.trim(), sort_order).run();
         const created = await env.DB.prepare('SELECT * FROM facility_groups WHERE grp = ?').bind(grp).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'facility_group_create', resourceType: 'facility_group', resourceId: grp, resourceName: body.label.trim(), beforeData: null, afterData: created });
         return json(created, 201);
       }
 
@@ -881,9 +882,11 @@ export default {
         const grp = decodeURIComponent(facGroupMatch[1]);
         const body = await request.json();
         if (body.sort_order === undefined) return json({ error: 'sort_order wajib diisi' }, 400);
+        const beforeGroup = await env.DB.prepare('SELECT * FROM facility_groups WHERE grp = ?').bind(grp).first();
         await env.DB.prepare('UPDATE facility_groups SET sort_order = ? WHERE grp = ?').bind(body.sort_order, grp).run();
         const updated = await env.DB.prepare('SELECT * FROM facility_groups WHERE grp = ?').bind(grp).first();
         if (!updated) return json({ error: 'Group not found' }, 404);
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'facility_group_edit', resourceType: 'facility_group', resourceId: grp, resourceName: updated.label, beforeData: beforeGroup, afterData: updated });
         return json(updated);
       }
 
@@ -896,7 +899,9 @@ export default {
         // Check if group has facilities
         const count = await env.DB.prepare('SELECT COUNT(*) as cnt FROM facilities WHERE grp = ?').bind(grp).first();
         if (count?.cnt > 0) return json({ error: 'Grup masih memiliki fasilitas. Hapus atau pindahkan fasilitas terlebih dahulu.' }, 400);
+        const beforeGroup = await env.DB.prepare('SELECT * FROM facility_groups WHERE grp = ?').bind(grp).first();
         await env.DB.prepare('DELETE FROM facility_groups WHERE grp = ?').bind(grp).run();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'facility_group_delete', resourceType: 'facility_group', resourceId: grp, resourceName: beforeGroup?.label, beforeData: beforeGroup, afterData: null });
         return json({ ok: true });
       }
 
@@ -907,12 +912,14 @@ export default {
         if (!admin) return json({ error: 'Unauthorized' }, 401);
 
         const facId = facToggleMatch[1];
+        const beforeFac = await env.DB.prepare('SELECT * FROM facilities WHERE id = ?').bind(facId).first();
         await env.DB.prepare(
           'UPDATE facilities SET is_active = CASE WHEN is_active = 1 THEN 0 ELSE 1 END WHERE id = ?'
         ).bind(facId).run();
 
         const updated = await env.DB.prepare('SELECT * FROM facilities WHERE id = ?').bind(facId).first();
         if (!updated) return json({ error: 'Facility not found' }, 404);
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'facility_edit', resourceType: 'facility', resourceId: facId, resourceName: updated.name, beforeData: { is_active: beforeFac?.is_active }, afterData: { is_active: updated.is_active } });
         return json(updated);
       }
 
@@ -955,6 +962,7 @@ export default {
         ).bind(id, body.name, body.grp, body.input_type, options, sort_order).run();
 
         const created = await env.DB.prepare('SELECT * FROM facilities WHERE id = ?').bind(id).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'facility_create', resourceType: 'facility', resourceId: id, resourceName: body.name, beforeData: null, afterData: created });
         return json(created, 201);
       }
 
@@ -968,6 +976,7 @@ export default {
 
         // PUT update
         if (request.method === 'PUT') {
+          const beforeFac = await env.DB.prepare('SELECT * FROM facilities WHERE id = ?').bind(facId).first();
           const body = await request.json();
           const setClauses = [];
           const vals = [];
@@ -989,14 +998,17 @@ export default {
           await env.DB.prepare('UPDATE facilities SET ' + setClauses.join(', ') + ' WHERE id = ?').bind(...vals).run();
           const updated = await env.DB.prepare('SELECT * FROM facilities WHERE id = ?').bind(facId).first();
           if (!updated) return json({ error: 'Facility not found' }, 404);
+          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'facility_edit', resourceType: 'facility', resourceId: facId, resourceName: updated.name, beforeData: beforeFac, afterData: updated });
           return json(updated);
         }
 
         // DELETE
         if (request.method === 'DELETE') {
           if (admin.role !== 'super_admin') return json({ error: 'Forbidden' }, 403);
+          const beforeFac = await env.DB.prepare('SELECT * FROM facilities WHERE id = ?').bind(facId).first();
           await env.DB.prepare('DELETE FROM masjid_facilities WHERE facility_id = ?').bind(facId).run();
           await env.DB.prepare('DELETE FROM facilities WHERE id = ?').bind(facId).run();
+          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'facility_delete', resourceType: 'facility', resourceId: facId, resourceName: beforeFac?.name, beforeData: beforeFac, afterData: null });
           return json({ ok: true });
         }
       }
@@ -1596,6 +1608,7 @@ export default {
         const created = await env.DB.prepare(
           "SELECT r.*, m.name as masjid_name FROM reviews r LEFT JOIN masjid m ON r.masjid_id = m.id WHERE r.id = ?"
         ).bind(id).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'review_create', resourceType: 'review', resourceId: id, resourceName: body.reviewer_name, beforeData: null, afterData: { masjid_id: body.masjid_id, reviewer_name: body.reviewer_name, rating: body.rating, status } });
         return json(created, 201);
       }
 
@@ -1990,6 +2003,7 @@ export default {
         ).bind(id, version, title, details || null, cats, 'draft', createdAt).run();
 
         const entry = await env.DB.prepare('SELECT * FROM changelog WHERE id = ?').bind(id).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'changelog_create', resourceType: 'changelog', resourceId: id, resourceName: title, beforeData: null, afterData: entry });
         return json(entry, 201);
       }
 
@@ -2024,6 +2038,7 @@ export default {
         ).bind(version, title, details || null, cats, entryId).run();
 
         const updated = await env.DB.prepare('SELECT * FROM changelog WHERE id = ?').bind(entryId).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'changelog_edit', resourceType: 'changelog', resourceId: entryId, resourceName: updated?.title, beforeData: existing, afterData: updated });
         return json(updated);
       }
 
@@ -2037,6 +2052,7 @@ export default {
         if (!existing) return json({ error: 'Entry tidak ditemukan' }, 404);
 
         await env.DB.prepare('DELETE FROM changelog WHERE id = ?').bind(entryId).run();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'changelog_delete', resourceType: 'changelog', resourceId: entryId, resourceName: existing?.title, beforeData: existing, afterData: null });
         return json({ ok: true });
       }
 
@@ -2064,6 +2080,7 @@ export default {
         ).bind(status, publishedAt, entryId).run();
 
         const updated = await env.DB.prepare('SELECT * FROM changelog WHERE id = ?').bind(entryId).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: status === 'published' ? 'changelog_publish' : 'changelog_unpublish', resourceType: 'changelog', resourceId: entryId, resourceName: existing?.title, beforeData: { status: existing?.status }, afterData: { status, published_at: publishedAt } });
         return json(updated);
       }
 
