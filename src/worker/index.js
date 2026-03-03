@@ -577,6 +577,39 @@ async function runMigrations(env) {
     await env.DB.prepare('INSERT INTO _migrations (version) VALUES (12)').run();
   }
 
+  // v13: feedback_groups table + feedback.group_id column + status migration
+  if (currentVersion < 13) {
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS feedback_groups (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    )`).run();
+    try { await env.DB.prepare('ALTER TABLE feedback ADD COLUMN group_id TEXT REFERENCES feedback_groups(id)').run(); } catch (e) { /* column may exist */ }
+    await env.DB.prepare("UPDATE feedback SET status = 'baru' WHERE status = 'todo'").run();
+    await env.DB.prepare("UPDATE feedback SET status = 'dibahas' WHERE status = 'in_progress'").run();
+    await env.DB.prepare("UPDATE feedback SET status = 'dipindahkan' WHERE status = 'done'").run();
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (13)').run();
+  }
+
+  // v14: backlog_tasks table
+  if (currentVersion < 14) {
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS backlog_tasks (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT,
+      category TEXT,
+      priority TEXT,
+      status TEXT NOT NULL DEFAULT 'backlog',
+      assignee_id TEXT REFERENCES users(id),
+      due_date TEXT,
+      source_feedback_id TEXT REFERENCES feedback(id),
+      sort_order INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )`).run();
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (14)').run();
+  }
+
   migrated = true;
 }
 
@@ -2090,11 +2123,11 @@ export default {
         const status = url.searchParams.get('status');
         const type = url.searchParams.get('type');
 
-        let sql = 'SELECT f.*, u.name as assigned_to_name FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id';
+        let sql = 'SELECT f.*, u.name as assigned_to_name, fg.title as group_title FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id LEFT JOIN feedback_groups fg ON f.group_id = fg.id';
         const conditions = [];
         const params = [];
 
-        if (status && ['todo', 'in_progress', 'done'].includes(status)) {
+        if (status && ['baru', 'dibahas', 'dipindahkan', 'ditolak'].includes(status)) {
           conditions.push('f.status = ?');
           params.push(status);
         }
@@ -2130,8 +2163,8 @@ export default {
         const feedbackType = type || 'feedback';
         if (!['feedback', 'idea'].includes(feedbackType)) return json({ error: 'Type tidak valid' }, 400);
 
-        const feedbackStatus = status || 'todo';
-        if (!['todo', 'in_progress', 'done'].includes(feedbackStatus)) return json({ error: 'Status tidak valid' }, 400);
+        const feedbackStatus = status || 'baru';
+        if (!['baru', 'dibahas', 'dipindahkan', 'ditolak'].includes(feedbackStatus)) return json({ error: 'Status tidak valid' }, 400);
 
         const id = crypto.randomUUID();
         const createdAt = new Date().toISOString();
@@ -2141,7 +2174,7 @@ export default {
         ).bind(id, feedbackType, category, message, name || null, wa_number || null, priority || null, feedbackStatus, body.due_date || null, body.assigned_to || null, JSON.stringify(body.attachments || []), createdAt).run();
 
         const entry = await env.DB.prepare(
-          'SELECT f.*, u.name as assigned_to_name FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id WHERE f.id = ?'
+          'SELECT f.*, u.name as assigned_to_name, fg.title as group_title FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id LEFT JOIN feedback_groups fg ON f.group_id = fg.id WHERE f.id = ?'
         ).bind(id).first();
         logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'feedback_create', resourceType: 'feedback', resourceId: id, resourceName: name || 'Anonim', beforeData: null, afterData: { type: feedbackType, category, status: feedbackStatus } });
         return json(entry, 201);
@@ -2163,7 +2196,7 @@ export default {
         const vals = [];
 
         if (body.status !== undefined) {
-          if (!['todo', 'in_progress', 'done'].includes(body.status)) {
+          if (!['baru', 'dibahas', 'dipindahkan', 'ditolak'].includes(body.status)) {
             return json({ error: 'Status tidak valid' }, 400);
           }
           setClauses.push('status = ?');
@@ -2239,7 +2272,7 @@ export default {
         ).bind(...vals).run();
 
         const updated = await env.DB.prepare(
-          'SELECT f.*, u.name as assigned_to_name FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id WHERE f.id = ?'
+          'SELECT f.*, u.name as assigned_to_name, fg.title as group_title FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id LEFT JOIN feedback_groups fg ON f.group_id = fg.id WHERE f.id = ?'
         ).bind(feedbackId).first();
         // Determine if this is just a status change or a broader edit
         const onlyStatusChanged = Object.keys(body).length === 1 && body.status !== undefined;
@@ -2478,6 +2511,192 @@ export default {
             'Content-Disposition': 'attachment; filename=analytics_export.csv',
           },
         });
+      }
+
+      // ── PATCH /api/feedback/:id/status ──
+      const feedbackStatusMatch = pathname.match(/^\/api\/feedback\/([^/]+)\/status$/);
+      if (feedbackStatusMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const feedbackId = feedbackStatusMatch[1];
+        const existing = await env.DB.prepare('SELECT * FROM feedback WHERE id = ?').bind(feedbackId).first();
+        if (!existing) return json({ error: 'Feedback tidak ditemukan' }, 404);
+        const body = await request.json();
+        if (!body.status || !['baru', 'dibahas', 'dipindahkan', 'ditolak'].includes(body.status)) {
+          return json({ error: 'Status tidak valid' }, 400);
+        }
+        await env.DB.prepare('UPDATE feedback SET status = ? WHERE id = ?').bind(body.status, feedbackId).run();
+        const updated = await env.DB.prepare(
+          'SELECT f.*, u.name as assigned_to_name, fg.title as group_title FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id LEFT JOIN feedback_groups fg ON f.group_id = fg.id WHERE f.id = ?'
+        ).bind(feedbackId).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'feedback_status_change', resourceType: 'feedback', resourceId: feedbackId, resourceName: existing.name || 'Anonim', beforeData: { status: existing.status }, afterData: { status: body.status } });
+        return json(updated);
+      }
+
+      // ── PATCH /api/feedback/:id/group ──
+      const feedbackGroupMatch = pathname.match(/^\/api\/feedback\/([^/]+)\/group$/);
+      if (feedbackGroupMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const feedbackId = feedbackGroupMatch[1];
+        const existing = await env.DB.prepare('SELECT * FROM feedback WHERE id = ?').bind(feedbackId).first();
+        if (!existing) return json({ error: 'Feedback tidak ditemukan' }, 404);
+        const body = await request.json();
+        const groupId = body.group_id || null;
+        if (groupId) {
+          const group = await env.DB.prepare('SELECT id FROM feedback_groups WHERE id = ?').bind(groupId).first();
+          if (!group) return json({ error: 'Group tidak ditemukan' }, 404);
+        }
+        await env.DB.prepare('UPDATE feedback SET group_id = ? WHERE id = ?').bind(groupId, feedbackId).run();
+        const updated = await env.DB.prepare(
+          'SELECT f.*, u.name as assigned_to_name, fg.title as group_title FROM feedback f LEFT JOIN users u ON f.assigned_to = u.id LEFT JOIN feedback_groups fg ON f.group_id = fg.id WHERE f.id = ?'
+        ).bind(feedbackId).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'feedback_group_assign', resourceType: 'feedback', resourceId: feedbackId, resourceName: existing.name || 'Anonim', beforeData: { group_id: existing.group_id }, afterData: { group_id: groupId } });
+        return json(updated);
+      }
+
+      // ── POST /api/feedback-groups ──
+      if (pathname === '/api/feedback-groups' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const body = await request.json();
+        if (!body.title || !body.title.trim()) return json({ error: 'Title wajib diisi' }, 400);
+        const id = crypto.randomUUID();
+        await env.DB.prepare('INSERT INTO feedback_groups (id, title) VALUES (?, ?)').bind(id, body.title.trim()).run();
+        const created = await env.DB.prepare('SELECT * FROM feedback_groups WHERE id = ?').bind(id).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'feedback_group_create', resourceType: 'feedback_group', resourceId: id, resourceName: body.title.trim(), beforeData: null, afterData: created });
+        return json(created, 201);
+      }
+
+      // ── DELETE /api/feedback-groups/:id ──
+      const feedbackGroupDeleteMatch = pathname.match(/^\/api\/feedback-groups\/([^/]+)$/);
+      if (feedbackGroupDeleteMatch && request.method === 'DELETE') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        if (admin.role !== 'super_admin') return json({ error: 'Forbidden' }, 403);
+        const groupId = feedbackGroupDeleteMatch[1];
+        const existing = await env.DB.prepare('SELECT * FROM feedback_groups WHERE id = ?').bind(groupId).first();
+        if (!existing) return json({ error: 'Group tidak ditemukan' }, 404);
+        await env.DB.prepare('UPDATE feedback SET group_id = NULL WHERE group_id = ?').bind(groupId).run();
+        await env.DB.prepare('DELETE FROM feedback_groups WHERE id = ?').bind(groupId).run();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'feedback_group_delete', resourceType: 'feedback_group', resourceId: groupId, resourceName: existing.title, beforeData: existing, afterData: null });
+        return json({ ok: true });
+      }
+
+      // ── GET /api/backlog ──
+      if (pathname === '/api/backlog' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const url = new URL(request.url);
+        const status = url.searchParams.get('status');
+        let sql = 'SELECT bt.*, u.name as assignee_name FROM backlog_tasks bt LEFT JOIN users u ON bt.assignee_id = u.id';
+        const conditions = [];
+        const params = [];
+        if (status && ['backlog', 'todo', 'in_progress', 'in_review', 'done'].includes(status)) {
+          conditions.push('bt.status = ?');
+          params.push(status);
+        }
+        if (conditions.length > 0) sql += ' WHERE ' + conditions.join(' AND ');
+        sql += ' ORDER BY bt.sort_order ASC, bt.created_at DESC';
+        const stmt = params.length > 0 ? env.DB.prepare(sql).bind(...params) : env.DB.prepare(sql);
+        const { results } = await stmt.all();
+        return json(results);
+      }
+
+      // ── POST /api/backlog ──
+      if (pathname === '/api/backlog' && request.method === 'POST') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const body = await request.json();
+        if (!body.title || !body.title.trim()) return json({ error: 'Title wajib diisi' }, 400);
+        if (body.priority && !['low', 'medium', 'high'].includes(body.priority)) return json({ error: 'Priority tidak valid' }, 400);
+        if (body.status && !['backlog', 'todo', 'in_progress', 'in_review', 'done'].includes(body.status)) return json({ error: 'Status tidak valid' }, 400);
+        const id = crypto.randomUUID();
+        const now = new Date().toISOString();
+        await env.DB.prepare(
+          'INSERT INTO backlog_tasks (id, title, description, category, priority, status, assignee_id, due_date, source_feedback_id, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(id, body.title.trim(), body.description || null, body.category || null, body.priority || null, body.status || 'backlog', body.assignee_id || null, body.due_date || null, body.source_feedback_id || null, body.sort_order || 0, now, now).run();
+        if (body.source_feedback_id) {
+          await env.DB.prepare("UPDATE feedback SET status = 'dipindahkan' WHERE id = ?").bind(body.source_feedback_id).run();
+        }
+        const created = await env.DB.prepare('SELECT bt.*, u.name as assignee_name FROM backlog_tasks bt LEFT JOIN users u ON bt.assignee_id = u.id WHERE bt.id = ?').bind(id).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'backlog_create', resourceType: 'backlog', resourceId: id, resourceName: body.title.trim(), beforeData: null, afterData: created });
+        return json(created, 201);
+      }
+
+      // ── PUT/PATCH/DELETE /api/backlog/:id ──
+      const backlogIdMatch = pathname.match(/^\/api\/backlog\/([^/]+)$/);
+      if (backlogIdMatch) {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const taskId = backlogIdMatch[1];
+
+        // PUT update
+        if (request.method === 'PUT') {
+          const beforeTask = await env.DB.prepare('SELECT * FROM backlog_tasks WHERE id = ?').bind(taskId).first();
+          if (!beforeTask) return json({ error: 'Task tidak ditemukan' }, 404);
+          const body = await request.json();
+          const setClauses = [];
+          const vals = [];
+          for (const col of ['title', 'description', 'category', 'priority', 'status', 'assignee_id', 'due_date', 'sort_order']) {
+            if (body[col] !== undefined) {
+              setClauses.push(col + ' = ?');
+              vals.push(body[col]);
+            }
+          }
+          if (body.status && !['backlog', 'todo', 'in_progress', 'in_review', 'done'].includes(body.status)) return json({ error: 'Status tidak valid' }, 400);
+          if (body.priority && !['low', 'medium', 'high'].includes(body.priority)) return json({ error: 'Priority tidak valid' }, 400);
+          if (setClauses.length === 0) return json({ error: 'Tidak ada data untuk diperbarui' }, 400);
+          setClauses.push("updated_at = datetime('now')");
+          vals.push(taskId);
+          await env.DB.prepare('UPDATE backlog_tasks SET ' + setClauses.join(', ') + ' WHERE id = ?').bind(...vals).run();
+          const updated = await env.DB.prepare('SELECT bt.*, u.name as assignee_name FROM backlog_tasks bt LEFT JOIN users u ON bt.assignee_id = u.id WHERE bt.id = ?').bind(taskId).first();
+          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'backlog_edit', resourceType: 'backlog', resourceId: taskId, resourceName: updated?.title, beforeData: beforeTask, afterData: updated });
+          return json(updated);
+        }
+
+        // DELETE
+        if (request.method === 'DELETE') {
+          if (admin.role !== 'super_admin') return json({ error: 'Forbidden' }, 403);
+          const existing = await env.DB.prepare('SELECT * FROM backlog_tasks WHERE id = ?').bind(taskId).first();
+          if (!existing) return json({ error: 'Task tidak ditemukan' }, 404);
+          await env.DB.prepare('DELETE FROM backlog_tasks WHERE id = ?').bind(taskId).run();
+          logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'backlog_delete', resourceType: 'backlog', resourceId: taskId, resourceName: existing.title, beforeData: existing, afterData: null });
+          return json({ ok: true });
+        }
+      }
+
+      // ── PATCH /api/backlog/:id/status ──
+      const backlogStatusMatch = pathname.match(/^\/api\/backlog\/([^/]+)\/status$/);
+      if (backlogStatusMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const taskId = backlogStatusMatch[1];
+        const existing = await env.DB.prepare('SELECT * FROM backlog_tasks WHERE id = ?').bind(taskId).first();
+        if (!existing) return json({ error: 'Task tidak ditemukan' }, 404);
+        const body = await request.json();
+        if (!body.status || !['backlog', 'todo', 'in_progress', 'in_review', 'done'].includes(body.status)) {
+          return json({ error: 'Status tidak valid' }, 400);
+        }
+        await env.DB.prepare("UPDATE backlog_tasks SET status = ?, updated_at = datetime('now') WHERE id = ?").bind(body.status, taskId).run();
+        const updated = await env.DB.prepare('SELECT bt.*, u.name as assignee_name FROM backlog_tasks bt LEFT JOIN users u ON bt.assignee_id = u.id WHERE bt.id = ?').bind(taskId).first();
+        logAudit(env, { adminId: admin.id, adminName: admin.name, action: 'backlog_status_change', resourceType: 'backlog', resourceId: taskId, resourceName: existing.title, beforeData: { status: existing.status }, afterData: { status: body.status } });
+        return json(updated);
+      }
+
+      // ── PATCH /api/backlog/:id/sort ──
+      const backlogSortMatch = pathname.match(/^\/api\/backlog\/([^/]+)\/sort$/);
+      if (backlogSortMatch && request.method === 'PATCH') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+        const taskId = backlogSortMatch[1];
+        const existing = await env.DB.prepare('SELECT * FROM backlog_tasks WHERE id = ?').bind(taskId).first();
+        if (!existing) return json({ error: 'Task tidak ditemukan' }, 404);
+        const body = await request.json();
+        if (body.sort_order === undefined) return json({ error: 'sort_order wajib diisi' }, 400);
+        await env.DB.prepare("UPDATE backlog_tasks SET sort_order = ?, updated_at = datetime('now') WHERE id = ?").bind(body.sort_order, taskId).run();
+        const updated = await env.DB.prepare('SELECT bt.*, u.name as assignee_name FROM backlog_tasks bt LEFT JOIN users u ON bt.assignee_id = u.id WHERE bt.id = ?').bind(taskId).first();
+        return json(updated);
       }
 
       // ── Serve HTML for all other routes ──
