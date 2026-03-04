@@ -485,37 +485,24 @@ export default function AuditLogPage() {
       </div>
 
       {/* Filter bar — single row */}
-      <div className="flex items-center gap-2 overflow-x-auto">
-        {/* Date presets */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          {[
-            { key: 'today', label: 'Hari Ini' },
-            { key: '7d', label: '7 Hari' },
-            { key: '30d', label: '30 Hari' },
-            { key: 'custom', label: 'Custom' },
-          ].map((p) => (
-            <button
-              key={p.key}
-              onClick={() => {
-                if (p.key !== 'custom') handleDatePreset(p.key);
-                else setDatePreset('custom');
-              }}
-              className={cn(
-                'px-3 py-1.5 text-xs font-medium rounded-md transition-colors border whitespace-nowrap',
-                datePreset === p.key
-                  ? 'bg-green text-white border-green'
-                  : 'bg-white text-text-3 border-border hover:text-text-2 hover:border-border-2'
-              )}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
+      <div className="flex items-center gap-2">
+        {/* Time dropdown */}
+        <Select
+          value={datePreset}
+          onChange={(e) => {
+            const v = e.target.value;
+            setDatePreset(v);
+            if (v !== 'custom') handleDatePreset(v);
+          }}
+          className="h-8 text-xs w-40 shrink-0"
+        >
+          <option value="today">Hari Ini</option>
+          <option value="7d">7 Hari</option>
+          <option value="30d">30 Hari</option>
+          <option value="custom">Custom</option>
+        </Select>
 
-        <div className="w-px h-6 bg-border shrink-0" />
-
-        {/* Dropdowns */}
-        <Select value={filters.action} onChange={(e) => handleFilterChange('action', e.target.value)} className="h-8 text-xs min-w-[130px] shrink-0">
+        <Select value={filters.action} onChange={(e) => handleFilterChange('action', e.target.value)} className="h-8 text-xs w-40 shrink-0">
           {ACTION_OPTIONS.map((opt) =>
             opt.group ? (
               <optgroup key={opt.group} label={opt.group}>
@@ -529,29 +516,29 @@ export default function AuditLogPage() {
           )}
         </Select>
 
-        <Select value={filters.resource_type} onChange={(e) => handleFilterChange('resource_type', e.target.value)} className="h-8 text-xs min-w-[130px] shrink-0">
+        <Select value={filters.resource_type} onChange={(e) => handleFilterChange('resource_type', e.target.value)} className="h-8 text-xs w-40 shrink-0">
           <option value="">Semua Resource</option>
           {Object.entries(RESOURCE_LABELS).map(([value, label]) => (
             <option key={value} value={value}>{label}</option>
           ))}
         </Select>
 
-        <Select value={filters.admin_id} onChange={(e) => handleFilterChange('admin_id', e.target.value)} className="h-8 text-xs min-w-[130px] shrink-0">
+        <Select value={filters.admin_id} onChange={(e) => handleFilterChange('admin_id', e.target.value)} className="h-8 text-xs w-40 shrink-0">
           <option value="">Semua Admin</option>
           {admins.map((a) => (
             <option key={a.id} value={a.id}>{a.name}</option>
           ))}
         </Select>
 
-        {/* Search — push right */}
-        <div className="relative ml-auto shrink-0">
+        {/* Search — fills remaining space */}
+        <div className="relative flex-1 min-w-[180px]">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-3" />
           <input
             type="text"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Cari audit log..."
-            className="h-8 pl-8 pr-3 w-56 rounded-md border border-border bg-white text-xs focus:outline-none focus:ring-2 focus:ring-green placeholder:text-text-3"
+            className="h-8 pl-8 pr-3 w-full rounded-md border border-border bg-white text-xs focus:outline-none focus:ring-2 focus:ring-green placeholder:text-text-3"
           />
         </div>
       </div>
