@@ -530,15 +530,15 @@ export default function AuditLogPage() {
           ))}
         </Select>
 
-        {/* Search — fills remaining space */}
-        <div className="relative flex-1 min-w-[180px]">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-3" />
+        {/* Search */}
+        <div className="relative ml-auto">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-text-3" />
           <input
             type="text"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Cari audit log..."
-            className="h-8 pl-8 pr-3 w-full rounded-md border border-border bg-white text-xs focus:outline-none focus:ring-2 focus:ring-green placeholder:text-text-3"
+            className="h-9 pl-9 pr-3 w-[200px] rounded-md border border-border bg-white text-sm focus:outline-none focus:ring-2 focus:ring-green placeholder:text-text-3"
           />
         </div>
       </div>
