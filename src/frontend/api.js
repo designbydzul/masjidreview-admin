@@ -33,12 +33,14 @@ export const googleSignIn = (credential) => apiFetch('/auth/google', { method: '
 
 // Stats
 export const getStats = () => apiFetch('/api/stats');
+export const getDashboard = () => apiFetch('/api/stats/dashboard');
 
 // Masjids
 export const getMasjids = (params = {}) => {
   const qs = new URLSearchParams();
   if (params.status) qs.set('status', params.status);
   if (params.missing) qs.set('missing', params.missing);
+  if (params.submitted_by) qs.set('submitted_by', params.submitted_by);
   const q = qs.toString();
   return apiFetch('/api/masjids' + (q ? '?' + q : ''));
 };
@@ -102,8 +104,14 @@ export const handleFacilityCorrections = (masjidId, action) =>
   apiFetch('/api/masjids/' + masjidId + '/facility-corrections', { method: 'PATCH', body: JSON.stringify({ action }) });
 export const getFacilityNotes = (masjidId) =>
   apiFetch('/api/masjids/' + masjidId + '/facility-notes');
-export const getFacilitySuggestions = (masjidId) =>
-  apiFetch('/api/facility-suggestions?masjid_id=' + masjidId);
+export const getFacilitySuggestions = (params = {}) => {
+  const qs = new URLSearchParams();
+  if (params.masjid_id) qs.set('masjid_id', params.masjid_id);
+  if (params.submitted_by_wa) qs.set('submitted_by_wa', params.submitted_by_wa);
+  if (params.status) qs.set('status', params.status);
+  const q = qs.toString();
+  return apiFetch('/api/facility-suggestions' + (q ? '?' + q : ''));
+};
 export const handleFacilitySuggestion = (sugId, action) =>
   apiFetch('/api/facility-suggestions/' + sugId, { method: 'PATCH', body: JSON.stringify({ action }) });
 

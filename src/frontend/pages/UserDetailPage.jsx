@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Star, Trash2 } from 'lucide-react';
-import { getUser, updateUser, forceLogout, deleteUser } from '../api';
+import { ArrowLeft, Star, LogOut, Trash2, MessageSquare, Building2, Wrench } from 'lucide-react';
+import { getUser, updateUser, forceLogout, deleteUser, getMasjids, getFacilitySuggestions } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from '../contexts/ToastContext';
 import { useConfirm } from '../contexts/ConfirmContext';
 import DataTable from '../components/DataTable';
+import ActionMenu from '../components/ActionMenu';
 import Badge from '../components/Badge';
 import { Card, CardContent } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -15,6 +16,24 @@ import { Select } from '../components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { SkeletonDetailPage } from '../components/Skeleton';
 import { formatWA, formatDate, truncate } from '../utils/format';
+import { cn } from '../lib/utils';
+
+const AGE_OPTIONS = ['<15', '16-20', '21-25', '26-30', '31-40', '41-50', '50+'];
+
+function ReviewCell({ text }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!text) return <span className="text-text-3 text-xs">-</span>;
+  const isLong = text.length > 50;
+  if (!isLong) return <span className="text-xs text-text-2">{text}</span>;
+  return (
+    <div>
+      <span className="text-xs text-text-2">{expanded ? text : text.slice(0, 50) + '...'}</span>
+      <button type="button" onClick={() => setExpanded(!expanded)} className="ml-1 text-xs text-green hover:underline">
+        {expanded ? 'Tutup' : 'Lihat'}
+      </button>
+    </div>
+  );
+}
 
 export default function UserDetailPage() {
   const { id } = useParams();
@@ -25,22 +44,38 @@ export default function UserDetailPage() {
 
   const [user, setUser] = useState(null);
   const [reviews, setReviews] = useState([]);
+  const [masjids, setMasjids] = useState([]);
+  const [facilities, setFacilities] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('reviews');
+
   const [editModal, setEditModal] = useState(false);
   const [editName, setEditName] = useState('');
   const [editCity, setEditCity] = useState('');
   const [editAgeRange, setEditAgeRange] = useState('');
   const [editGender, setEditGender] = useState('');
 
-  const loadData = () => {
+  const loadData = async () => {
     setLoading(true);
-    getUser(id)
-      .then((data) => {
-        setUser(data.user);
-        setReviews(data.reviews || []);
-      })
-      .catch((err) => showToast(err.message, 'error'))
-      .finally(() => setLoading(false));
+    try {
+      const data = await getUser(id);
+      setUser(data.user);
+      setReviews(data.reviews || []);
+
+      // Load masjids submitted by this user
+      const masjidData = await getMasjids({ submitted_by: id });
+      setMasjids(masjidData);
+
+      // Load facility suggestions by this user's WA
+      if (data.user?.wa_number) {
+        const facData = await getFacilitySuggestions({ submitted_by_wa: data.user.wa_number });
+        setFacilities(facData);
+      }
+    } catch (err) {
+      showToast(err.message, 'error');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { loadData(); }, [id]);
@@ -78,7 +113,7 @@ export default function UserDetailPage() {
   const handleDelete = async () => {
     const ok = await confirm({
       title: 'Hapus User',
-      message: 'Apakah kamu yakin ingin menghapus user ini? Review yang sudah dibuat akan tetap tersimpan sebagai anonim. Tindakan ini tidak bisa dibatalkan.',
+      message: 'Yakin ingin menghapus user ini? Tindakan ini permanen dan tidak dapat dibatalkan.',
       confirmLabel: 'Hapus',
       confirmStyle: 'red',
     });
@@ -92,19 +127,53 @@ export default function UserDetailPage() {
     }
   };
 
+  const tabs = [
+    { key: 'reviews', label: 'Review', icon: MessageSquare, count: reviews.length },
+    { key: 'masjids', label: 'Masjid', icon: Building2, count: masjids.length },
+    { key: 'facilities', label: 'Fasilitas', icon: Wrench, count: facilities.length },
+  ];
+
   const reviewColumns = [
-    { key: 'masjid_name', label: 'Masjid', render: (row) => row.masjid_name || '-' },
-    { key: 'rating', label: 'Rating', render: (row) => row.rating ? <span className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />{row.rating}</span> : '-' },
-    { key: 'short_description', label: 'Testimoni', render: (row) => <span className="text-text-2">{truncate(row.short_description)}</span> },
-    { key: 'status', label: 'Status', render: (row) => <Badge status={row.status} /> },
-    { key: 'created_at', label: 'Tanggal', render: (row) => <span className="text-text-3 text-xs">{formatDate(row.created_at)}</span> },
+    { key: 'masjid_name', label: 'MASJID', render: (row) => <span className="font-medium">{row.masjid_name || '-'}</span> },
+    { key: 'rating', label: 'RATING', render: (row) => row.rating ? <span className="flex items-center gap-1"><Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />{row.rating}</span> : '-' },
+    { key: 'short_description', label: 'TESTIMONI', render: (row) => <ReviewCell text={row.short_description} /> },
+    { key: 'status', label: 'STATUS', render: (row) => <Badge status={row.status} /> },
+    { key: 'created_at', label: 'TANGGAL', render: (row) => <span className="text-text-3 text-xs">{formatDate(row.created_at)}</span> },
     {
       key: 'actions',
-      label: 'Aksi',
+      label: 'AKSI',
+      className: 'text-right',
       render: (row) => (
-        <Button variant="outline" size="sm" onClick={() => navigate(`/reviews/${row.id}/edit`)}>Edit</Button>
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={() => navigate(`/reviews`)}>Lihat</Button>
+        </div>
       ),
     },
+  ];
+
+  const masjidColumns = [
+    { key: 'name', label: 'NAMA MASJID', render: (row) => <span className="font-medium">{row.name}</span> },
+    { key: 'city', label: 'KOTA', render: (row) => row.city || '-' },
+    { key: 'status', label: 'STATUS', render: (row) => <Badge status={row.status} /> },
+    { key: 'created_at', label: 'TANGGAL SUBMIT', render: (row) => <span className="text-text-3 text-xs">{formatDate(row.created_at)}</span> },
+    {
+      key: 'actions',
+      label: 'AKSI',
+      className: 'text-right',
+      render: (row) => (
+        <div className="flex justify-end">
+          <Button variant="outline" size="sm" onClick={() => navigate(`/masjids/${row.id}/edit`)}>Lihat</Button>
+        </div>
+      ),
+    },
+  ];
+
+  const facilityColumns = [
+    { key: 'masjid_name', label: 'MASJID', render: (row) => <span className="font-medium">{row.masjid_name || '-'}</span> },
+    { key: 'facility_name', label: 'FASILITAS', render: (row) => row.facility_name || '-' },
+    { key: 'suggested_value', label: 'NILAI SARAN', render: (row) => <span className="text-text-2 text-sm">{row.suggested_value ?? '-'}</span> },
+    { key: 'status', label: 'STATUS', render: (row) => <Badge status={row.status} /> },
+    { key: 'created_at', label: 'TANGGAL', render: (row) => <span className="text-text-3 text-xs">{formatDate(row.created_at)}</span> },
   ];
 
   if (loading) return <SkeletonDetailPage />;
@@ -112,21 +181,27 @@ export default function UserDetailPage() {
 
   return (
     <div>
+      {/* Header */}
       <div className="flex items-center justify-between mb-5">
-        <div className="flex items-center gap-3">
-          <Button variant="link" onClick={() => navigate('/users')} className="px-0">
-            <ArrowLeft className="h-3.5 w-3.5 mr-1" />
-            Kembali
-          </Button>
-          <h1 className="font-heading text-[22px] font-bold text-text">{user.name || 'User'}</h1>
+        <Button variant="link" onClick={() => navigate('/users')} className="px-0">
+          <ArrowLeft className="h-3.5 w-3.5 mr-1" />
+          Kembali
+        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={handleEditOpen}>Edit Profil</Button>
+          {admin?.role === 'super_admin' && (
+            <ActionMenu items={[
+              { label: 'Force Logout', icon: LogOut, onClick: handleForceLogout, destructive: true },
+              { label: 'Hapus User', icon: Trash2, onClick: handleDelete, destructive: true },
+            ]} />
+          )}
         </div>
-        <Button variant="destructive" size="sm" onClick={handleForceLogout}>Force Logout</Button>
       </div>
 
-      {/* User info card */}
+      {/* Profile card */}
       <Card className="mb-5">
         <CardContent className="p-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
             <div><span className="text-xs text-text-3 block">Nama</span><span className="text-sm font-medium text-text">{user.name || '-'}</span></div>
             <div><span className="text-xs text-text-3 block">WhatsApp</span><span className="text-sm text-text">{formatWA(user.wa_number)}</span></div>
             <div><span className="text-xs text-text-3 block">Gender</span><span className="text-sm text-text">{user.gender || '-'}</span></div>
@@ -134,26 +209,41 @@ export default function UserDetailPage() {
             <div><span className="text-xs text-text-3 block">Usia</span><span className="text-sm text-text">{user.age_range || '-'}</span></div>
             <div><span className="text-xs text-text-3 block">Bergabung</span><span className="text-sm text-text">{formatDate(user.created_at)}</span></div>
           </div>
-          <Button variant="outline" size="sm" onClick={handleEditOpen} className="mt-4 text-green border-green hover:bg-green hover:text-white">
-            Edit Profil
-          </Button>
         </CardContent>
       </Card>
 
-      {/* Reviews */}
-      <h2 className="font-heading text-base font-semibold text-text mb-3">Review oleh user ini ({reviews.length})</h2>
-      <DataTable columns={reviewColumns} data={reviews} emptyIcon={Star} emptyText="Belum ada review" />
+      {/* Tabs */}
+      <div className="flex items-center gap-1 border-b border-border mb-4">
+        {tabs.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={cn(
+              'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors',
+              activeTab === tab.key
+                ? 'border-green text-green'
+                : 'border-transparent text-text-3 hover:text-text-2 hover:border-gray-300'
+            )}
+          >
+            <tab.icon className="h-3.5 w-3.5" />
+            {tab.label}
+            <span className={cn(
+              'text-xs px-1.5 py-0.5 rounded-full font-heading font-medium',
+              activeTab === tab.key ? 'bg-emerald-50 text-green' : 'bg-gray-100 text-text-3'
+            )}>{tab.count}</span>
+          </button>
+        ))}
+      </div>
 
-      {/* Danger zone — super_admin only */}
-      {admin?.role === 'super_admin' && (
-        <div className="mt-8 border border-red/20 rounded-lg p-5">
-          <h2 className="font-heading text-base font-semibold text-red mb-1">Zona Berbahaya</h2>
-          <p className="text-text-2 text-sm mb-3">Tindakan ini bersifat permanen dan tidak dapat dibatalkan.</p>
-          <Button variant="destructive" size="sm" onClick={handleDelete}>
-            <Trash2 className="h-3.5 w-3.5 mr-1" />
-            Hapus User
-          </Button>
-        </div>
+      {/* Tab content */}
+      {activeTab === 'reviews' && (
+        <DataTable columns={reviewColumns} data={reviews} emptyIcon={MessageSquare} emptyText="Belum ada review" />
+      )}
+      {activeTab === 'masjids' && (
+        <DataTable columns={masjidColumns} data={masjids} emptyIcon={Building2} emptyText="Belum ada masjid" />
+      )}
+      {activeTab === 'facilities' && (
+        <DataTable columns={facilityColumns} data={facilities} emptyIcon={Wrench} emptyText="Belum ada saran fasilitas" />
       )}
 
       {/* Edit dialog */}
@@ -183,13 +273,9 @@ export default function UserDetailPage() {
               <Label>Rentang Usia</Label>
               <Select value={editAgeRange} onChange={(e) => setEditAgeRange(e.target.value)}>
                 <option value="">Belum diatur</option>
-                <option value="<15">&lt;15</option>
-                <option value="16-20">16-20</option>
-                <option value="21-25">21-25</option>
-                <option value="26-30">26-30</option>
-                <option value="31-40">31-40</option>
-                <option value="41-50">41-50</option>
-                <option value="50+">50+</option>
+                {AGE_OPTIONS.map((opt) => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
               </Select>
             </div>
           </div>

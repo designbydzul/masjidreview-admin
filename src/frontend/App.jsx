@@ -10,7 +10,6 @@ import DashboardPage from './pages/DashboardPage';
 import MasjidListPage from './pages/MasjidListPage';
 import MasjidFormPage from './pages/MasjidFormPage';
 import ReviewListPage from './pages/ReviewListPage';
-import ReviewFormPage from './pages/ReviewFormPage';
 import UserListPage from './pages/UserListPage';
 import UserDetailPage from './pages/UserDetailPage';
 import AdminListPage from './pages/AdminListPage';
@@ -42,7 +41,6 @@ export default function App() {
                 <Route path="masjids/new" element={<MasjidFormPage />} />
                 <Route path="masjids/:id/edit" element={<MasjidFormPage />} />
                 <Route path="reviews" element={<ReviewListPage />} />
-                <Route path="reviews/:id/edit" element={<ReviewFormPage />} />
                 <Route path="users" element={<UserListPage />} />
                 <Route path="users/:id" element={<UserDetailPage />} />
                 <Route path="admins" element={<AdminListPage />} />

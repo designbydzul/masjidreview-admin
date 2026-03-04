@@ -160,50 +160,41 @@ function SkeletonAnalytics() {
         <Skeleton className="h-8 w-32 rounded-sm" />
       </div>
       {/* Overview cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        {Array.from({ length: 4 }).map((_, i) => (
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-6">
+        {Array.from({ length: 6 }).map((_, i) => (
           <div key={i} className="border border-border rounded-sm p-5">
             <Skeleton className="h-3 w-24 mb-3" />
             <Skeleton className="h-8 w-16" />
           </div>
         ))}
       </div>
-      {/* Chart placeholders */}
-      <div className="border border-border rounded-sm p-5 mb-6">
-        <Skeleton className="h-3 w-20 mb-4" />
-        <Skeleton className="h-[200px] w-full rounded-sm" />
-      </div>
+      {/* Row 2: Funnel + CTA */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        {Array.from({ length: 2 }).map((_, i) => (
-          <div key={i} className="border border-border rounded-sm p-5">
-            <Skeleton className="h-3 w-28 mb-4" />
-            <Skeleton className="h-[200px] w-full rounded-sm" />
-          </div>
-        ))}
+        <div className="border border-border rounded-sm p-5">
+          <Skeleton className="h-3 w-32 mb-4" />
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="mb-3">
+              <Skeleton className="h-3 w-24 mb-1" />
+              <Skeleton className="h-7 rounded-sm" style={{ width: (100 - i * 20) + '%' }} />
+            </div>
+          ))}
+        </div>
+        <div className="border border-border rounded-sm p-5">
+          <Skeleton className="h-3 w-20 mb-4" />
+          <Skeleton className="h-[200px] w-full rounded-sm" />
+        </div>
       </div>
-      {/* Funnel */}
-      <div className="border border-border rounded-sm p-5 mb-6">
-        <Skeleton className="h-3 w-32 mb-4" />
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="mb-3">
-            <Skeleton className="h-3 w-24 mb-1" />
-            <Skeleton className="h-7 rounded-sm" style={{ width: (100 - i * 20) + '%' }} />
-          </div>
-        ))}
-      </div>
-      {/* Peak hours */}
+      {/* Row 3: Peak hours */}
       <div className="border border-border rounded-sm p-5 mb-6">
         <Skeleton className="h-3 w-36 mb-4" />
         <Skeleton className="h-[250px] w-full rounded-sm" />
       </div>
-      {/* Tables */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        {Array.from({ length: 2 }).map((_, i) => (
+      {/* Row 4: Three columns */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        {Array.from({ length: 3 }).map((_, i) => (
           <div key={i} className="border border-border rounded-sm p-5">
             <Skeleton className="h-3 w-28 mb-4" />
-            {Array.from({ length: 5 }).map((_, j) => (
-              <Skeleton key={j} className="h-4 w-full mb-2" />
-            ))}
+            <Skeleton className="h-[200px] w-full rounded-sm" />
           </div>
         ))}
       </div>

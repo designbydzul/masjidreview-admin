@@ -610,6 +610,18 @@ async function runMigrations(env) {
     await env.DB.prepare('INSERT INTO _migrations (version) VALUES (14)').run();
   }
 
+  // v15: merge type=idea into category=idea
+  if (currentVersion < 15) {
+    await env.DB.prepare("UPDATE feedback SET category = 'idea' WHERE type = 'idea' AND category != 'idea'").run();
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (15)').run();
+  }
+
+  // v16: add attachments column to backlog_tasks
+  if (currentVersion < 16) {
+    try { await env.DB.prepare("ALTER TABLE backlog_tasks ADD COLUMN attachments TEXT DEFAULT '[]'").run(); } catch (e) { /* column may already exist */ }
+    await env.DB.prepare('INSERT INTO _migrations (version) VALUES (16)').run();
+  }
+
   migrated = true;
 }
 
@@ -875,6 +887,67 @@ export default {
         return json(stats);
       }
 
+      // ── GET /api/stats/dashboard ──
+      if (pathname === '/api/stats/dashboard' && request.method === 'GET') {
+        const admin = await getSession(request, env);
+        if (!admin) return json({ error: 'Unauthorized' }, 401);
+
+        const now = new Date();
+        const today = now.toISOString().split('T')[0];
+        const yesterday = new Date(now - 86400000).toISOString().split('T')[0];
+        const weekAgo = new Date(now - 7 * 86400000).toISOString().split('T')[0];
+
+        // Stat cards
+        const cards = await env.DB.prepare(`SELECT
+          (SELECT COUNT(*) FROM masjid WHERE status = 'approved' AND is_deleted = 0) as total_masjid,
+          (SELECT COUNT(*) FROM masjid WHERE status = 'approved' AND is_deleted = 0 AND created_at >= ?) as masjid_this_week,
+          (SELECT COUNT(*) FROM reviews WHERE status = 'approved') as total_reviews,
+          (SELECT COUNT(*) FROM reviews WHERE status = 'pending') as pending_reviews,
+          (SELECT COUNT(*) FROM masjid WHERE status = 'pending' AND is_deleted = 0) as pending_masjid,
+          (SELECT COUNT(*) FROM users) as total_users,
+          (SELECT COUNT(*) FROM feedback WHERE status = 'baru') as feedback_baru,
+          (SELECT COUNT(*) FROM feedback) as total_feedback
+        `).bind(weekAgo).first();
+
+        // Perlu Ditindak: pending masjids (max 5)
+        const { results: pendingMasjids } = await env.DB.prepare(
+          "SELECT id, name FROM masjid WHERE status = 'pending' AND is_deleted = 0 ORDER BY created_at DESC LIMIT 5"
+        ).all();
+
+        // Perlu Ditindak: pending reviews (max 5)
+        const { results: pendingReviews } = await env.DB.prepare(
+          "SELECT id, reviewer_name FROM reviews WHERE status = 'pending' ORDER BY created_at DESC LIMIT 5"
+        ).all();
+
+        // Perlu Ditindak: feedback baru (max 5)
+        const { results: feedbackBaru } = await env.DB.prepare(
+          "SELECT id, message FROM feedback WHERE status = 'baru' ORDER BY created_at DESC LIMIT 5"
+        ).all();
+
+        // Traffic: page views today, yesterday, last 7 days total
+        const traffic = await env.DB.prepare(`SELECT
+          (SELECT COUNT(*) FROM analytics_events WHERE event_type = 'page_view' AND created_at >= ?) as views_today,
+          (SELECT COUNT(*) FROM analytics_events WHERE event_type = 'page_view' AND created_at >= ? AND created_at < ?) as views_yesterday,
+          (SELECT COUNT(*) FROM analytics_events WHERE event_type = 'page_view' AND created_at >= ?) as views_7d
+        `).bind(today, yesterday, today, weekAgo).first();
+
+        // Traffic: daily breakdown last 7 days
+        const { results: dailyViews } = await env.DB.prepare(
+          "SELECT DATE(created_at) as date, COUNT(*) as count FROM analytics_events WHERE event_type = 'page_view' AND created_at >= ? GROUP BY DATE(created_at) ORDER BY date ASC"
+        ).bind(weekAgo).all();
+
+        return json({
+          cards,
+          pendingMasjids,
+          pendingMasjidTotal: cards.pending_masjid,
+          pendingReviews,
+          pendingReviewTotal: cards.pending_reviews,
+          feedbackBaru,
+          feedbackBaruTotal: cards.feedback_baru,
+          traffic: { today: traffic.views_today, yesterday: traffic.views_yesterday, total7d: traffic.views_7d, daily: dailyViews },
+        });
+      }
+
       // ── GET /api/facility-groups ──
       if (pathname === '/api/facility-groups' && request.method === 'GET') {
         const admin = await getSession(request, env);
@@ -1068,6 +1141,11 @@ export default {
           sql += ' AND fs.status = ?';
           params.push(status);
         }
+        const submittedByWa = url.searchParams.get('submitted_by_wa');
+        if (submittedByWa) {
+          sql += ' AND fs.submitted_by_wa = ?';
+          params.push(submittedByWa);
+        }
 
         sql += ' ORDER BY fs.created_at DESC';
 
@@ -1166,6 +1244,12 @@ export default {
         if (status) {
           sql += ' AND m.status = ?';
           params.push(status);
+        }
+
+        const submittedBy = url.searchParams.get('submitted_by');
+        if (submittedBy) {
+          sql += ' AND m.submitted_by = ?';
+          params.push(submittedBy);
         }
 
         // Kelengkapan filter: missing fields
@@ -1654,8 +1738,9 @@ export default {
 
         const id = crypto.randomUUID();
 
+        const photoUrls = Array.isArray(body.photo_urls) ? JSON.stringify(body.photo_urls) : '[]';
         await env.DB.prepare(
-          "INSERT INTO reviews (id, masjid_id, reviewer_name, rating, short_description, source_platform, source_url, status, validated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'approved', ?, datetime('now'))"
+          "INSERT INTO reviews (id, masjid_id, reviewer_name, rating, short_description, source_platform, source_url, photo_urls, status, validated_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'approved', ?, datetime('now'))"
         ).bind(
           id,
           body.masjid_id,
@@ -1664,6 +1749,7 @@ export default {
           body.short_description || null,
           body.source_platform || null,
           body.source_url || null,
+          photoUrls,
           admin.name
         ).run();
 
@@ -1772,7 +1858,7 @@ export default {
         // PUT update review
         if (request.method === 'PUT') {
           const body = await request.json();
-          const allowedCols = ['reviewer_name', 'rating', 'short_description', 'source_url', 'source_platform', 'masjid_id'];
+          const allowedCols = ['reviewer_name', 'rating', 'short_description', 'source_url', 'source_platform', 'masjid_id', 'photo_urls'];
 
           const beforeReview = await env.DB.prepare('SELECT id, reviewer_name, rating, short_description, source_url, source_platform, masjid_id FROM reviews WHERE id = ?').bind(reviewId).first();
 
@@ -1781,7 +1867,7 @@ export default {
           for (const col of allowedCols) {
             if (body[col] !== undefined) {
               setClauses.push(col + ' = ?');
-              vals.push(body[col]);
+              vals.push(col === 'photo_urls' && Array.isArray(body[col]) ? JSON.stringify(body[col]) : body[col]);
             }
           }
 
@@ -1818,7 +1904,7 @@ export default {
         const admin = await getSession(request, env);
         if (!admin) return json({ error: 'Unauthorized' }, 401);
         const { results } = await env.DB.prepare(
-          "SELECT u.*, COUNT(r.id) as review_count FROM users u LEFT JOIN reviews r ON r.user_id = u.id GROUP BY u.id ORDER BY u.created_at DESC"
+          "SELECT u.*, COUNT(DISTINCT r.id) as review_count, COUNT(DISTINCT m.id) as masjid_count FROM users u LEFT JOIN reviews r ON r.user_id = u.id LEFT JOIN masjid m ON m.submitted_by = u.id AND m.is_deleted = 0 GROUP BY u.id ORDER BY u.created_at DESC"
         ).all();
         return json(results);
       }
@@ -2157,11 +2243,10 @@ export default {
         const { category, message, name, wa_number, priority, status, type } = body;
 
         if (!category || !message) return json({ error: 'Category dan message wajib diisi' }, 400);
-        if (!['bug', 'saran', 'umum'].includes(category)) return json({ error: 'Category tidak valid' }, 400);
+        if (!['bug', 'saran', 'umum', 'idea'].includes(category)) return json({ error: 'Category tidak valid' }, 400);
         if (priority && !['low', 'medium', 'high'].includes(priority)) return json({ error: 'Priority tidak valid' }, 400);
 
-        const feedbackType = type || 'feedback';
-        if (!['feedback', 'idea'].includes(feedbackType)) return json({ error: 'Type tidak valid' }, 400);
+        const feedbackType = 'feedback';
 
         const feedbackStatus = status || 'baru';
         if (!['baru', 'dibahas', 'dipindahkan', 'ditolak'].includes(feedbackStatus)) return json({ error: 'Status tidak valid' }, 400);
@@ -2211,16 +2296,8 @@ export default {
           vals.push(body.priority);
         }
 
-        if (body.type !== undefined) {
-          if (!['feedback', 'idea'].includes(body.type)) {
-            return json({ error: 'Type tidak valid' }, 400);
-          }
-          setClauses.push('type = ?');
-          vals.push(body.type);
-        }
-
         if (body.category !== undefined) {
-          if (!['bug', 'saran', 'umum'].includes(body.category)) {
+          if (!['bug', 'saran', 'umum', 'idea'].includes(body.category)) {
             return json({ error: 'Category tidak valid' }, 400);
           }
           setClauses.push('category = ?');
@@ -2373,15 +2450,34 @@ export default {
         if (!admin) return json({ error: 'Unauthorized' }, 401);
         const url = new URL(request.url);
         const { from, to } = getDateRange(url);
-        const row = await env.DB.prepare(
-          `SELECT
-            SUM(CASE WHEN event_type = 'page_view' THEN 1 ELSE 0 END) as total_page_views,
-            COUNT(DISTINCT CASE WHEN event_type = 'page_view' THEN ip_hash END) as unique_visitors,
-            SUM(CASE WHEN event_type = 'review_submitted' THEN 1 ELSE 0 END) as total_reviews,
-            SUM(CASE WHEN event_type = 'masjid_submitted' THEN 1 ELSE 0 END) as total_masjids
-          FROM analytics_events WHERE created_at BETWEEN ? AND ?`
-        ).bind(from, to).first();
-        return json(row);
+        const [evRow, webReviews, botReviews, masjidCount, userCount] = await Promise.all([
+          env.DB.prepare(
+            `SELECT
+              SUM(CASE WHEN event_type = 'page_view' THEN 1 ELSE 0 END) as total_page_views,
+              COUNT(DISTINCT CASE WHEN event_type = 'page_view' THEN ip_hash END) as unique_visitors
+            FROM analytics_events WHERE created_at BETWEEN ? AND ?`
+          ).bind(from, to).first(),
+          env.DB.prepare(
+            `SELECT COUNT(*) as cnt FROM reviews WHERE source_platform = 'web' AND created_at BETWEEN ? AND ?`
+          ).bind(from, to).first(),
+          env.DB.prepare(
+            `SELECT COUNT(*) as cnt FROM reviews WHERE source_platform = 'wa_bot' AND created_at BETWEEN ? AND ?`
+          ).bind(from, to).first(),
+          env.DB.prepare(
+            `SELECT COUNT(*) as cnt FROM masjid WHERE created_at BETWEEN ? AND ?`
+          ).bind(from, to).first(),
+          env.DB.prepare(
+            `SELECT COUNT(*) as cnt FROM users WHERE created_at BETWEEN ? AND ?`
+          ).bind(from, to).first(),
+        ]);
+        return json({
+          total_page_views: evRow?.total_page_views || 0,
+          unique_visitors: evRow?.unique_visitors || 0,
+          reviews_web: webReviews?.cnt || 0,
+          reviews_bot: botReviews?.cnt || 0,
+          masjid_submitted: masjidCount?.cnt || 0,
+          user_baru: userCount?.cnt || 0,
+        });
       }
 
       // ── GET /api/analytics/cta-summary ──
@@ -2390,12 +2486,19 @@ export default {
         if (!admin) return json({ error: 'Unauthorized' }, 401);
         const url = new URL(request.url);
         const { from, to } = getDateRange(url);
-        const { results } = await env.DB.prepare(
-          `SELECT event_type, COUNT(*) as count FROM analytics_events
-          WHERE event_type IN ('cta_click_tulis_review','cta_click_tambah_masjid','ig_link_click','maps_link_click')
-            AND created_at BETWEEN ? AND ?
-          GROUP BY event_type`
-        ).bind(from, to).all();
+        const [{ results }, joinRow] = await Promise.all([
+          env.DB.prepare(
+            `SELECT event_type, COUNT(*) as count FROM analytics_events
+            WHERE event_type IN ('cta_click_tulis_review','cta_click_tambah_masjid','maps_link_click')
+              AND created_at BETWEEN ? AND ?
+            GROUP BY event_type`
+          ).bind(from, to).all(),
+          env.DB.prepare(
+            `SELECT COUNT(*) as count FROM analytics_events
+            WHERE event_type = 'page_view' AND page = '/join' AND created_at BETWEEN ? AND ?`
+          ).bind(from, to).first(),
+        ]);
+        results.push({ event_type: 'join_page', count: joinRow?.count || 0 });
         return json(results);
       }
 
@@ -2411,12 +2514,33 @@ export default {
           WHERE event_type = 'filter_city' AND created_at BETWEEN ? AND ?
           GROUP BY name ORDER BY count DESC LIMIT 10`
         ).bind(from, to).all();
-        const { results: preferences } = await env.DB.prepare(
-          `SELECT json_extract(event_data, '$.preference') as name, COUNT(*) as count
-          FROM analytics_events
-          WHERE event_type = 'filter_preference' AND created_at BETWEEN ? AND ?
-          GROUP BY name ORDER BY count DESC LIMIT 10`
+        // Preferences: event_data has {"preferences":["fac-ramadan-takjil","fac-ramadan-parkir"]}
+        // Need to split array and count each individually, then map facility IDs to names
+        const { results: prefRows } = await env.DB.prepare(
+          `SELECT event_data FROM analytics_events
+          WHERE event_type = 'filter_preference' AND created_at BETWEEN ? AND ?`
         ).bind(from, to).all();
+        const prefCounts = {};
+        for (const row of prefRows) {
+          try {
+            const d = JSON.parse(row.event_data || '{}');
+            const arr = Array.isArray(d.preferences) ? d.preferences : [];
+            for (const p of arr) { prefCounts[p] = (prefCounts[p] || 0) + 1; }
+          } catch {}
+        }
+        // Map facility IDs to human names
+        const prefIds = Object.keys(prefCounts);
+        let facMap = {};
+        if (prefIds.length > 0) {
+          const { results: facs } = await env.DB.prepare(
+            `SELECT id, name FROM facilities WHERE id IN (${prefIds.map(() => '?').join(',')})`
+          ).bind(...prefIds).all();
+          for (const f of facs) facMap[f.id] = f.name;
+        }
+        const preferences = Object.entries(prefCounts)
+          .map(([id, count]) => ({ name: facMap[id] || id.replace('fac-ramadan-', ''), count }))
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 10);
         return json({ cities, preferences });
       }
 
@@ -2426,12 +2550,19 @@ export default {
         if (!admin) return json({ error: 'Unauthorized' }, 401);
         const url = new URL(request.url);
         const { from, to } = getDateRange(url);
-        const { results } = await env.DB.prepare(
-          `SELECT event_type, COUNT(*) as count FROM analytics_events
-          WHERE event_type IN ('page_view','login_start','login_success','review_submitted')
-            AND created_at BETWEEN ? AND ?
-          GROUP BY event_type`
-        ).bind(from, to).all();
+        const [{ results }, joinRow] = await Promise.all([
+          env.DB.prepare(
+            `SELECT event_type, COUNT(*) as count FROM analytics_events
+            WHERE event_type IN ('page_view','login_success','review_submitted')
+              AND created_at BETWEEN ? AND ?
+            GROUP BY event_type`
+          ).bind(from, to).all(),
+          env.DB.prepare(
+            `SELECT COUNT(*) as count FROM analytics_events
+            WHERE event_type = 'page_view' AND page = '/join' AND created_at BETWEEN ? AND ?`
+          ).bind(from, to).first(),
+        ]);
+        results.push({ event_type: 'join_page', count: joinRow?.count || 0 });
         return json(results);
       }
 
@@ -2471,9 +2602,11 @@ export default {
         const url = new URL(request.url);
         const { from, to } = getDateRange(url);
         const { results } = await env.DB.prepare(
-          `SELECT page, COUNT(*) as count FROM analytics_events
-          WHERE event_type = 'page_view' AND created_at BETWEEN ? AND ? AND page IS NOT NULL
-          GROUP BY page ORDER BY count DESC LIMIT 20`
+          `SELECT ae.page, COUNT(*) as count, m.name as masjid_name
+          FROM analytics_events ae
+          LEFT JOIN masjid m ON ae.page LIKE '/masjids/%' AND m.id = REPLACE(ae.page, '/masjids/', '')
+          WHERE ae.event_type = 'page_view' AND ae.created_at BETWEEN ? AND ? AND ae.page IS NOT NULL
+          GROUP BY ae.page ORDER BY count DESC LIMIT 20`
         ).bind(from, to).all();
         return json(results);
       }
@@ -2611,11 +2744,15 @@ export default {
         if (!body.title || !body.title.trim()) return json({ error: 'Title wajib diisi' }, 400);
         if (body.priority && !['low', 'medium', 'high'].includes(body.priority)) return json({ error: 'Priority tidak valid' }, 400);
         if (body.status && !['backlog', 'todo', 'in_progress', 'in_review', 'done'].includes(body.status)) return json({ error: 'Status tidak valid' }, 400);
+        if (body.attachments !== undefined) {
+          if (!Array.isArray(body.attachments)) return json({ error: 'Attachments harus berupa array' }, 400);
+          if (body.attachments.length > 5) return json({ error: 'Maksimal 5 attachment' }, 400);
+        }
         const id = crypto.randomUUID();
         const now = new Date().toISOString();
         await env.DB.prepare(
-          'INSERT INTO backlog_tasks (id, title, description, category, priority, status, assignee_id, due_date, source_feedback_id, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        ).bind(id, body.title.trim(), body.description || null, body.category || null, body.priority || null, body.status || 'backlog', body.assignee_id || null, body.due_date || null, body.source_feedback_id || null, body.sort_order || 0, now, now).run();
+          'INSERT INTO backlog_tasks (id, title, description, category, priority, status, assignee_id, due_date, source_feedback_id, sort_order, attachments, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).bind(id, body.title.trim(), body.description || null, body.category || null, body.priority || null, body.status || 'backlog', body.assignee_id || null, body.due_date || null, body.source_feedback_id || null, body.sort_order || 0, JSON.stringify(body.attachments || []), now, now).run();
         if (body.source_feedback_id) {
           await env.DB.prepare("UPDATE feedback SET status = 'dipindahkan' WHERE id = ?").bind(body.source_feedback_id).run();
         }
@@ -2643,6 +2780,12 @@ export default {
               setClauses.push(col + ' = ?');
               vals.push(body[col]);
             }
+          }
+          if (body.attachments !== undefined) {
+            if (!Array.isArray(body.attachments)) return json({ error: 'Attachments harus berupa array' }, 400);
+            if (body.attachments.length > 5) return json({ error: 'Maksimal 5 attachment' }, 400);
+            setClauses.push('attachments = ?');
+            vals.push(JSON.stringify(body.attachments));
           }
           if (body.status && !['backlog', 'todo', 'in_progress', 'in_review', 'done'].includes(body.status)) return json({ error: 'Status tidak valid' }, 400);
           if (body.priority && !['low', 'medium', 'high'].includes(body.priority)) return json({ error: 'Priority tidak valid' }, 400);

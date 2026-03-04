@@ -22,6 +22,7 @@ import { Textarea } from '../components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import { formatDate } from '../utils/format';
 import { cn } from '../lib/utils';
+import AttachmentEditor from '../components/AttachmentEditor';
 
 // ── Constants ──
 
@@ -51,7 +52,13 @@ const PRIORITY_CONFIG = {
 
 const PRIORITY_OPTIONS = Object.entries(PRIORITY_CONFIG).map(([key, cfg]) => ({ value: key, label: cfg.label }));
 
-const emptyForm = { title: '', description: '', category: '', priority: '', assignee_id: '', due_date: '', status: 'backlog' };
+const PRIORITY_ACTIVE = {
+  low: 'bg-emerald-50 text-emerald-700 border-emerald-300',
+  medium: 'bg-orange-50 text-orange-700 border-orange-300',
+  high: 'bg-rose-50 text-rose-700 border-rose-300',
+};
+
+const emptyForm = { title: '', description: '', category: '', priority: '', assignee_id: '', due_date: '', status: 'backlog', attachments: [] };
 
 // ── Badge Helpers ──
 
@@ -140,10 +147,10 @@ function KanbanColumn({ column, collapsed, onToggleCollapse }) {
     <div
       ref={setNodeRef}
       className={cn(
-        'flex-shrink-0 rounded-sm border border-border flex flex-col',
+        'rounded-none border-r border-border flex flex-col first:border-l-0 last:border-r-0',
         column.tint || 'bg-bg',
         isOver && 'border-green bg-green-light',
-        collapsed ? 'w-10' : 'w-[240px]'
+        collapsed ? 'w-10 flex-shrink-0' : 'flex-1 min-w-0'
       )}
     >
       {/* Header */}
@@ -209,6 +216,8 @@ function TaskDetailDialog({ task, open, onOpenChange, onSave, onDelete, admins, 
 
   useEffect(() => {
     if (task) {
+      let attachments = [];
+      try { attachments = JSON.parse(task.attachments || '[]'); } catch { /* ignore */ }
       setForm({
         title: task.title || '',
         description: task.description || '',
@@ -217,6 +226,7 @@ function TaskDetailDialog({ task, open, onOpenChange, onSave, onDelete, admins, 
         assignee_id: task.assignee_id || '',
         due_date: task.due_date || '',
         status: task.status || 'backlog',
+        attachments,
       });
     }
   }, [task]);
@@ -235,6 +245,9 @@ function TaskDetailDialog({ task, open, onOpenChange, onSave, onDelete, admins, 
       if ((form.priority || '') !== (task.priority || '')) payload.priority = form.priority || null;
       if ((form.assignee_id || '') !== (task.assignee_id || '')) payload.assignee_id = form.assignee_id || null;
       if ((form.due_date || '') !== (task.due_date || '')) payload.due_date = form.due_date || null;
+
+      const origAttachments = (() => { try { return JSON.parse(task.attachments || '[]'); } catch { return []; } })();
+      if (JSON.stringify(form.attachments) !== JSON.stringify(origAttachments)) payload.attachments = form.attachments;
 
       if (Object.keys(payload).length === 0) {
         showToast('Tidak ada perubahan');
@@ -259,45 +272,72 @@ function TaskDetailDialog({ task, open, onOpenChange, onSave, onDelete, admins, 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[540px]">
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>Detail Task</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4">
-          <div>
-            <Label className="text-xs text-text-3 mb-1.5 block">Judul *</Label>
-            <Input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
+        <div className="flex gap-6">
+          {/* Left column — 60% */}
+          <div className="flex-[3] min-w-0 flex flex-col gap-4">
+            <div className="shrink-0">
+              <Label className="text-xs text-text-3 mb-1.5 block">Judul *</Label>
+              <Input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
+            </div>
+            <div className="flex-1 flex flex-col min-h-0">
+              <Label className="text-xs text-text-3 mb-1.5 block shrink-0">Deskripsi</Label>
+              <Textarea
+                value={form.description}
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                placeholder="Deskripsi task..."
+                className="flex-1 min-h-[160px] resize-none"
+              />
+            </div>
+            <AttachmentEditor value={form.attachments} onChange={(a) => setForm((f) => ({ ...f, attachments: a }))} />
           </div>
 
-          <div>
-            <Label className="text-xs text-text-3 mb-1.5 block">Deskripsi</Label>
-            <Textarea
-              value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              placeholder="Deskripsi task..."
-              className="min-h-[100px]"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
+          {/* Right column — 40% */}
+          <div className="flex-[2] min-w-0 space-y-4">
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Kategori</Label>
-              <Select value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}>
-                <option value="">Pilih kategori</option>
-                {CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </Select>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, category: f.category === key ? '' : key }))}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
+                      form.category === key
+                        ? cfg.className
+                        : 'bg-white text-text-2 border-border hover:border-green'
+                    )}
+                  >
+                    {cfg.label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Prioritas</Label>
-              <Select value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value }))}>
-                <option value="">Pilih prioritas</option>
-                {PRIORITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </Select>
+              <div className="flex gap-2">
+                {['low', 'medium', 'high'].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, priority: f.priority === p ? '' : p }))}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
+                      form.priority === p
+                        ? PRIORITY_ACTIVE[p]
+                        : 'bg-white text-text-2 border-border hover:border-green'
+                    )}
+                  >
+                    {PRIORITY_CONFIG[p].label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Ditugaskan ke</Label>
               <Select value={form.assignee_id} onChange={(e) => setForm((f) => ({ ...f, assignee_id: e.target.value }))}>
@@ -314,25 +354,23 @@ function TaskDetailDialog({ task, open, onOpenChange, onSave, onDelete, admins, 
                 className="h-9 w-full px-3 text-sm border border-border rounded-sm bg-white focus:outline-none focus:ring-1 focus:ring-green"
               />
             </div>
-          </div>
-
-          <div>
-            <Label className="text-xs text-text-3 mb-1.5 block">Status</Label>
-            <span className="text-sm font-medium text-text">{statusLabel}</span>
-          </div>
-
-          {task.source_feedback_id && (
             <div>
-              <Label className="text-xs text-text-3 mb-1.5 block">Sumber Feedback</Label>
-              <a
-                href="/feedback"
-                className="inline-flex items-center gap-1 text-sm text-green hover:underline"
-              >
-                <ExternalLink className="h-3.5 w-3.5" />
-                Lihat feedback asal
-              </a>
+              <Label className="text-xs text-text-3 mb-1.5 block">Status</Label>
+              <span className="text-sm font-medium text-text">{statusLabel}</span>
             </div>
-          )}
+            {task.source_feedback_id && (
+              <div>
+                <Label className="text-xs text-text-3 mb-1.5 block">Sumber Feedback</Label>
+                <a
+                  href="/feedback"
+                  className="inline-flex items-center gap-1 text-sm text-green hover:underline"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Lihat feedback asal
+                </a>
+              </div>
+            )}
+          </div>
         </div>
 
         <DialogFooter className="flex !justify-between">
@@ -379,6 +417,7 @@ function CreateTaskDialog({ open, onOpenChange, onSuccess, admins }) {
         priority: form.priority || null,
         assignee_id: form.assignee_id || null,
         due_date: form.due_date || null,
+        attachments: form.attachments,
         status: 'backlog',
       });
       showToast('Task ditambahkan');
@@ -393,41 +432,72 @@ function CreateTaskDialog({ open, onOpenChange, onSuccess, admins }) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-[480px]">
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>Tambah Task</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
-          <div>
-            <Label className="text-xs text-text-3 mb-1.5 block">Judul *</Label>
-            <Input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="Judul task..." />
+
+        <div className="flex gap-6 border-t border-border pt-5">
+          {/* Left column — 60% */}
+          <div className="flex-[3] min-w-0 flex flex-col gap-4">
+            <div className="shrink-0">
+              <Label className="text-xs text-text-3 mb-1.5 block">Judul *</Label>
+              <Input value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} placeholder="Judul task..." />
+            </div>
+            <div className="flex-1 flex flex-col min-h-0">
+              <Label className="text-xs text-text-3 mb-1.5 block shrink-0">Deskripsi</Label>
+              <Textarea
+                value={form.description}
+                onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
+                placeholder="Deskripsi task..."
+                className="flex-1 min-h-[160px] resize-none"
+              />
+            </div>
+            <AttachmentEditor value={form.attachments} onChange={(a) => setForm((f) => ({ ...f, attachments: a }))} />
           </div>
-          <div>
-            <Label className="text-xs text-text-3 mb-1.5 block">Deskripsi</Label>
-            <Textarea
-              value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              placeholder="Deskripsi task..."
-              className="min-h-[80px]"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
+
+          {/* Right column — 40% */}
+          <div className="flex-[2] min-w-0 space-y-4">
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Kategori</Label>
-              <Select value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}>
-                <option value="">Pilih kategori</option>
-                {CATEGORY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </Select>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(CATEGORY_CONFIG).map(([key, cfg]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, category: f.category === key ? '' : key }))}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
+                      form.category === key
+                        ? cfg.className
+                        : 'bg-white text-text-2 border-border hover:border-green'
+                    )}
+                  >
+                    {cfg.label}
+                  </button>
+                ))}
+              </div>
             </div>
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Prioritas</Label>
-              <Select value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value }))}>
-                <option value="">Pilih prioritas</option>
-                {PRIORITY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </Select>
+              <div className="flex gap-2">
+                {['low', 'medium', 'high'].map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setForm((f) => ({ ...f, priority: f.priority === p ? '' : p }))}
+                    className={cn(
+                      'px-3 py-1.5 text-xs font-medium rounded-full border transition-colors',
+                      form.priority === p
+                        ? PRIORITY_ACTIVE[p]
+                        : 'bg-white text-text-2 border-border hover:border-green'
+                    )}
+                  >
+                    {PRIORITY_CONFIG[p].label}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
             <div>
               <Label className="text-xs text-text-3 mb-1.5 block">Ditugaskan ke</Label>
               <Select value={form.assignee_id} onChange={(e) => setForm((f) => ({ ...f, assignee_id: e.target.value }))}>
@@ -446,7 +516,8 @@ function CreateTaskDialog({ open, onOpenChange, onSuccess, admins }) {
             </div>
           </div>
         </div>
-        <DialogFooter>
+
+        <DialogFooter className="border-t border-border pt-4">
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Batal</Button>
           <Button onClick={handleCreate} disabled={saving}>
             {saving ? 'Menyimpan...' : 'Tambah'}
@@ -580,9 +651,9 @@ export default function BacklogPage() {
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-border-2 rounded w-48" />
           <div className="h-10 bg-border-2 rounded w-full" />
-          <div className="flex gap-4 overflow-x-auto">
+          <div className="flex">
             {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="flex-shrink-0 w-[240px] bg-border-2 rounded-sm h-[400px]" />
+              <div key={i} className="flex-1 min-w-0 bg-border-2 h-[400px] border-r border-border last:border-r-0" />
             ))}
           </div>
         </div>
@@ -591,9 +662,9 @@ export default function BacklogPage() {
   }
 
   return (
-    <div className="p-6 flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
+    <div className="flex flex-col" style={{ height: 'calc(100vh - 56px)' }}>
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 flex-shrink-0">
+      <div className="flex items-center justify-between mb-4 flex-shrink-0 px-6 pt-6">
         <h1 className="font-heading font-bold text-[22px] text-text">Backlog</h1>
         <Button onClick={() => setShowCreate(true)} className="font-semibold">
           <Plus className="h-4 w-4 mr-1" />
@@ -602,7 +673,7 @@ export default function BacklogPage() {
       </div>
 
       {/* Filter bar */}
-      <div className="flex items-center gap-2 mb-4 flex-shrink-0 flex-wrap">
+      <div className="flex items-center gap-2 mb-4 flex-shrink-0 flex-wrap px-6">
         <Select
           value={categoryFilter}
           onChange={(e) => setCategoryFilter(e.target.value)}
@@ -645,7 +716,7 @@ export default function BacklogPage() {
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex gap-3 overflow-x-auto flex-1 min-h-0 pb-2">
+        <div className="flex flex-1 min-h-0 border-t border-border">
           {columns.map((col) => (
             <KanbanColumn
               key={col.id}
