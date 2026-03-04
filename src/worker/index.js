@@ -96,7 +96,7 @@ async function logAudit(env, { adminId, adminName, action, resourceType, resourc
       afterData ? JSON.stringify(afterData) : null
     ).run();
   } catch (e) {
-    console.error('Audit log error:', e.message);
+    console.error('logAudit failed:', e);
   }
 }
 
