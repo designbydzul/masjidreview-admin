@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ClipboardList, Eye, Calendar, Filter } from 'lucide-react';
+import { ClipboardList, Eye, Search } from 'lucide-react';
 import { getAuditLogs, getAuditLog, getAdmins } from '../api';
 import { formatRelativeTime, formatDate } from '../utils/format';
 import { cn } from '../lib/utils';
@@ -24,9 +24,10 @@ const ACTION_LABELS = {
   masjid_reject: 'Tolak Masjid',
   masjid_bulk_approve: 'Bulk Setujui Masjid',
   masjid_bulk_reject: 'Bulk Tolak Masjid',
+  masjid_bulk_delete: 'Bulk Hapus Masjid',
   user_promote: 'Promosi User',
   user_demote: 'Demosi User',
-  user_force_logout: 'Paksa Logout User',
+  user_force_logout: 'Paksa Logout',
   user_delete: 'Hapus User',
   user_edit: 'Edit User',
   user_create: 'Buat User',
@@ -38,6 +39,26 @@ const ACTION_LABELS = {
   feedback_edit: 'Edit Feedback',
   feedback_create: 'Buat Feedback',
   feedback_delete: 'Hapus Feedback',
+  feedback_group_create: 'Buat Grup Feedback',
+  feedback_group_delete: 'Hapus Grup Feedback',
+  feedback_group_assign: 'Assign Grup Feedback',
+  facility_create: 'Buat Fasilitas',
+  facility_edit: 'Edit Fasilitas',
+  facility_delete: 'Hapus Fasilitas',
+  facility_group_create: 'Buat Grup Fasilitas',
+  facility_group_edit: 'Edit Grup Fasilitas',
+  facility_group_delete: 'Hapus Grup Fasilitas',
+  facility_corrections_accept: 'Terima Koreksi',
+  facility_corrections_reject: 'Tolak Koreksi',
+  changelog_create: 'Buat Changelog',
+  changelog_edit: 'Edit Changelog',
+  changelog_delete: 'Hapus Changelog',
+  changelog_publish: 'Publish Changelog',
+  changelog_unpublish: 'Unpublish Changelog',
+  backlog_create: 'Buat Backlog',
+  backlog_edit: 'Edit Backlog',
+  backlog_delete: 'Hapus Backlog',
+  backlog_status_change: 'Ubah Status Backlog',
 };
 
 const RESOURCE_LABELS = {
@@ -45,7 +66,12 @@ const RESOURCE_LABELS = {
   masjid: 'Masjid',
   user: 'User',
   facility_suggestion: 'Saran Fasilitas',
+  facility: 'Fasilitas',
+  facility_group: 'Grup Fasilitas',
   feedback: 'Feedback',
+  feedback_group: 'Grup Feedback',
+  changelog: 'Changelog',
+  backlog: 'Backlog',
 };
 
 const ACTION_OPTIONS = [
@@ -67,6 +93,7 @@ const ACTION_OPTIONS = [
     { value: 'masjid_delete', label: 'Hapus' },
     { value: 'masjid_bulk_approve', label: 'Bulk Setujui' },
     { value: 'masjid_bulk_reject', label: 'Bulk Tolak' },
+    { value: 'masjid_bulk_delete', label: 'Bulk Hapus' },
   ]},
   { group: 'User', items: [
     { value: 'user_create', label: 'Buat' },
@@ -76,11 +103,14 @@ const ACTION_OPTIONS = [
     { value: 'user_force_logout', label: 'Paksa Logout' },
     { value: 'user_delete', label: 'Hapus' },
   ]},
-  { group: 'Saran Fasilitas', items: [
-    { value: 'suggestion_approve', label: 'Setujui' },
-    { value: 'suggestion_reject', label: 'Tolak' },
-    { value: 'suggestion_bulk_approve', label: 'Bulk Setujui' },
-    { value: 'suggestion_bulk_reject', label: 'Bulk Tolak' },
+  { group: 'Fasilitas', items: [
+    { value: 'facility_create', label: 'Buat' },
+    { value: 'facility_edit', label: 'Edit' },
+    { value: 'facility_delete', label: 'Hapus' },
+    { value: 'suggestion_approve', label: 'Setujui Saran' },
+    { value: 'suggestion_reject', label: 'Tolak Saran' },
+    { value: 'suggestion_bulk_approve', label: 'Bulk Setujui Saran' },
+    { value: 'suggestion_bulk_reject', label: 'Bulk Tolak Saran' },
   ]},
   { group: 'Feedback', items: [
     { value: 'feedback_create', label: 'Buat' },
@@ -88,22 +118,36 @@ const ACTION_OPTIONS = [
     { value: 'feedback_status_change', label: 'Ubah Status' },
     { value: 'feedback_delete', label: 'Hapus' },
   ]},
+  { group: 'Changelog', items: [
+    { value: 'changelog_create', label: 'Buat' },
+    { value: 'changelog_edit', label: 'Edit' },
+    { value: 'changelog_publish', label: 'Publish' },
+    { value: 'changelog_delete', label: 'Hapus' },
+  ]},
+  { group: 'Backlog', items: [
+    { value: 'backlog_create', label: 'Buat' },
+    { value: 'backlog_edit', label: 'Edit' },
+    { value: 'backlog_status_change', label: 'Ubah Status' },
+    { value: 'backlog_delete', label: 'Hapus' },
+  ]},
 ];
 
 function getActionColor(action) {
   if (!action) return 'bg-gray-100 text-gray-600 border-gray-200';
-  if (action.includes('approve') || action.includes('create') || action.includes('promote'))
+  if (action.includes('approve') || action.includes('create') || action === 'changelog_publish')
     return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-  if (action.includes('delete') || action.includes('reject') || action.includes('demote'))
+  if (action.includes('delete') || action.includes('reject'))
     return 'bg-rose-50 text-rose-700 border-rose-200';
-  if (action.includes('edit') || action.includes('status_change'))
+  if (action.includes('edit') || action.includes('status_change') || action === 'changelog_unpublish')
     return 'bg-blue-50 text-blue-700 border-blue-200';
+  if (action.includes('promote') || action.includes('demote') || action === 'user_force_logout')
+    return 'bg-amber-50 text-amber-700 border-amber-200';
   return 'bg-gray-100 text-gray-600 border-gray-200';
 }
 
 function ActionBadge({ action }) {
   return (
-    <span className={cn('inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border', getActionColor(action))}>
+    <span className={cn('inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border whitespace-nowrap', getActionColor(action))}>
       {ACTION_LABELS[action] || action}
     </span>
   );
@@ -111,6 +155,89 @@ function ActionBadge({ action }) {
 
 function toLocalDate(d) {
   return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+// Derive a short before → after summary from before_data and after_data
+function getChangeSummary(row) {
+  let before = row.before_data;
+  let after = row.after_data;
+
+  // Parse JSON strings if needed
+  if (typeof before === 'string') { try { before = JSON.parse(before); } catch { before = null; } }
+  if (typeof after === 'string') { try { after = JSON.parse(after); } catch { after = null; } }
+
+  if (!before && !after) return null;
+
+  // For create actions, show key created value
+  if (!before && after) {
+    if (after.status) return { label: 'status', value: after.status };
+    if (after.role) return { label: 'role', value: after.role };
+    if (after.name) return { label: 'dibuat', value: after.name };
+    return null;
+  }
+
+  // For delete actions
+  if (before && !after) {
+    if (before.status) return { label: before.status, value: 'dihapus' };
+    if (before.name) return { label: before.name, value: 'dihapus' };
+    return { label: '', value: 'dihapus' };
+  }
+
+  // For updates, find the most relevant changed field
+  // Priority: status > role > name > first changed field
+  const priority = ['status', 'role', 'name', 'is_active', 'priority', 'category'];
+  for (const key of priority) {
+    if (before[key] !== undefined && after[key] !== undefined && String(before[key]) !== String(after[key])) {
+      return { label: key, before: String(before[key]), after: String(after[key]) };
+    }
+  }
+
+  // Fallback: first differing key
+  const allKeys = new Set([...Object.keys(before || {}), ...Object.keys(after || {})]);
+  for (const key of allKeys) {
+    if (key === 'ids' || key === 'count') continue;
+    const bv = before?.[key];
+    const av = after?.[key];
+    if (bv !== undefined && av !== undefined && JSON.stringify(bv) !== JSON.stringify(av)) {
+      return { label: key, before: String(bv), after: String(av) };
+    }
+  }
+
+  // Bulk actions
+  if (before?.count && after?.status) {
+    return { label: before.count + ' item', value: after.status };
+  }
+
+  return null;
+}
+
+function ChangeSummary({ row }) {
+  const summary = getChangeSummary(row);
+  if (!summary) return <span className="text-text-3 text-xs">—</span>;
+
+  // Simple value display (create/delete)
+  if (summary.value && !summary.before) {
+    return (
+      <span className="text-xs">
+        {summary.label && <span className="text-text-3">{summary.label}: </span>}
+        <span className="font-medium text-text-1">{summary.value}</span>
+      </span>
+    );
+  }
+
+  // Before → After display
+  if (summary.before && summary.after) {
+    return (
+      <span className="text-xs">
+        {summary.label && <span className="text-text-3">{summary.label}: </span>}
+        <span className="text-rose-600 line-through">{summary.before}</span>
+        <span className="text-text-3 mx-1">→</span>
+        <span className="text-emerald-700 font-medium">{summary.after}</span>
+      </span>
+    );
+  }
+
+  return <span className="text-text-3 text-xs">—</span>;
 }
 
 function JsonBlock({ data, label, comparisonData }) {
@@ -214,10 +341,12 @@ export default function AuditLogPage() {
     action: '',
     resource_type: '',
     admin_id: '',
+    search: '',
     from: thirtyDaysAgo,
     to: today,
   });
   const [datePreset, setDatePreset] = useState('30d');
+  const [searchInput, setSearchInput] = useState('');
 
   const [selectedLogId, setSelectedLogId] = useState(null);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -228,6 +357,15 @@ export default function AuditLogPage() {
   useEffect(() => {
     getAdmins().then((data) => setAdmins(Array.isArray(data) ? data : data.admins || [])).catch(() => {});
   }, []);
+
+  // Debounce search input
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setFilters((prev) => ({ ...prev, search: searchInput }));
+      setPage(1);
+    }, 400);
+    return () => clearTimeout(t);
+  }, [searchInput]);
 
   // Fetch logs
   const fetchLogs = useCallback(async () => {
@@ -299,6 +437,11 @@ export default function AuditLogPage() {
       ),
     },
     {
+      key: 'change',
+      label: 'Perubahan',
+      render: (row) => <ChangeSummary row={row} />,
+    },
+    {
       key: 'detail',
       label: '',
       render: (row) => (
@@ -311,98 +454,101 @@ export default function AuditLogPage() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
       <div>
         <h1 className="text-xl font-heading font-bold text-text-1">Audit Log</h1>
         <p className="text-sm text-text-3 mt-1">Riwayat semua aksi admin dalam sistem</p>
       </div>
 
-      {/* Filters */}
-      <div className="bg-white rounded-lg border border-border p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <Filter className="h-4 w-4 text-text-3" />
-          <span className="text-sm font-semibold text-text-2">Filter</span>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          {/* Action filter */}
-          <Select value={filters.action} onChange={(e) => handleFilterChange('action', e.target.value)}>
-            {ACTION_OPTIONS.map((opt) =>
-              opt.group ? (
-                <optgroup key={opt.group} label={opt.group}>
-                  {opt.items.map((item) => (
-                    <option key={item.value} value={item.value}>{item.label}</option>
-                  ))}
-                </optgroup>
-              ) : (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              )
+      {/* Filter bar — single row */}
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Date presets */}
+        {[
+          { key: 'today', label: 'Hari Ini' },
+          { key: '7d', label: '7 Hari' },
+          { key: '30d', label: '30 Hari' },
+          { key: 'custom', label: 'Custom' },
+        ].map((p) => (
+          <button
+            key={p.key}
+            onClick={() => {
+              if (p.key !== 'custom') handleDatePreset(p.key);
+              else setDatePreset('custom');
+            }}
+            className={cn(
+              'px-3 py-1.5 text-xs font-medium rounded-md transition-colors border',
+              datePreset === p.key
+                ? 'bg-green text-white border-green'
+                : 'bg-white text-text-3 border-border hover:text-text-2 hover:border-border-2'
             )}
-          </Select>
+          >
+            {p.label}
+          </button>
+        ))}
 
-          {/* Resource type filter */}
-          <Select value={filters.resource_type} onChange={(e) => handleFilterChange('resource_type', e.target.value)}>
-            <option value="">Semua Resource</option>
-            {Object.entries(RESOURCE_LABELS).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </Select>
+        <div className="w-px h-6 bg-border mx-1" />
 
-          {/* Admin filter */}
-          <Select value={filters.admin_id} onChange={(e) => handleFilterChange('admin_id', e.target.value)}>
-            <option value="">Semua Admin</option>
-            {admins.map((a) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </Select>
+        {/* Dropdowns */}
+        <Select value={filters.action} onChange={(e) => handleFilterChange('action', e.target.value)} className="h-8 text-xs min-w-[130px]">
+          {ACTION_OPTIONS.map((opt) =>
+            opt.group ? (
+              <optgroup key={opt.group} label={opt.group}>
+                {opt.items.map((item) => (
+                  <option key={item.value} value={item.value}>{item.label}</option>
+                ))}
+              </optgroup>
+            ) : (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            )
+          )}
+        </Select>
 
-          {/* Date range presets */}
-          <div className="flex items-center gap-1.5">
-            <Calendar className="h-4 w-4 text-text-3 shrink-0" />
-            {[
-              { key: 'today', label: 'Hari Ini' },
-              { key: '7d', label: '7 Hari' },
-              { key: '30d', label: '30 Hari' },
-              { key: 'custom', label: 'Custom' },
-            ].map((p) => (
-              <button
-                key={p.key}
-                onClick={() => {
-                  if (p.key !== 'custom') handleDatePreset(p.key);
-                  else setDatePreset('custom');
-                }}
-                className={cn(
-                  'px-2 py-1 text-xs font-medium rounded transition-colors',
-                  datePreset === p.key
-                    ? 'bg-green text-white'
-                    : 'bg-bg text-text-3 hover:text-text-2 hover:bg-border-2'
-                )}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
+        <Select value={filters.resource_type} onChange={(e) => handleFilterChange('resource_type', e.target.value)} className="h-8 text-xs min-w-[130px]">
+          <option value="">Semua Resource</option>
+          {Object.entries(RESOURCE_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </Select>
+
+        <Select value={filters.admin_id} onChange={(e) => handleFilterChange('admin_id', e.target.value)} className="h-8 text-xs min-w-[130px]">
+          <option value="">Semua Admin</option>
+          {admins.map((a) => (
+            <option key={a.id} value={a.id}>{a.name}</option>
+          ))}
+        </Select>
+
+        {/* Search — push right */}
+        <div className="relative ml-auto">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-text-3" />
+          <input
+            type="text"
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+            placeholder="Cari audit log..."
+            className="h-8 pl-8 pr-3 w-56 rounded-md border border-border bg-white text-xs focus:outline-none focus:ring-2 focus:ring-green placeholder:text-text-3"
+          />
         </div>
-
-        {/* Custom date inputs */}
-        {datePreset === 'custom' && (
-          <div className="flex items-center gap-2 mt-3">
-            <input
-              type="date"
-              value={filters.from}
-              onChange={(e) => { setFilters((prev) => ({ ...prev, from: e.target.value })); setPage(1); }}
-              className="h-9 rounded-md border border-border bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-green"
-            />
-            <span className="text-text-3 text-sm">s/d</span>
-            <input
-              type="date"
-              value={filters.to}
-              onChange={(e) => { setFilters((prev) => ({ ...prev, to: e.target.value })); setPage(1); }}
-              className="h-9 rounded-md border border-border bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-green"
-            />
-          </div>
-        )}
       </div>
+
+      {/* Custom date inputs */}
+      {datePreset === 'custom' && (
+        <div className="flex items-center gap-2">
+          <input
+            type="date"
+            value={filters.from}
+            onChange={(e) => { setFilters((prev) => ({ ...prev, from: e.target.value })); setPage(1); }}
+            className="h-8 rounded-md border border-border bg-white px-3 text-xs focus:outline-none focus:ring-2 focus:ring-green"
+          />
+          <span className="text-text-3 text-xs">s/d</span>
+          <input
+            type="date"
+            value={filters.to}
+            onChange={(e) => { setFilters((prev) => ({ ...prev, to: e.target.value })); setPage(1); }}
+            className="h-8 rounded-md border border-border bg-white px-3 text-xs focus:outline-none focus:ring-2 focus:ring-green"
+          />
+        </div>
+      )}
 
       {/* Table */}
       <div className="bg-white rounded-lg border border-border">

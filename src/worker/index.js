@@ -2405,6 +2405,8 @@ export default {
         if (action) { conditions.push('action = ?'); binds.push(action); }
         if (resourceType) { conditions.push('resource_type = ?'); binds.push(resourceType); }
         if (adminId) { conditions.push('admin_id = ?'); binds.push(adminId); }
+        const search = url.searchParams.get('search');
+        if (search) { conditions.push("(resource_name LIKE ? OR admin_name LIKE ?)"); binds.push('%' + search + '%', '%' + search + '%'); }
 
         if (from) {
           conditions.push('created_at >= ?');
@@ -2421,7 +2423,7 @@ export default {
 
         const countRow = await env.DB.prepare('SELECT COUNT(*) as total FROM audit_logs' + where).bind(...binds).first();
         const { results } = await env.DB.prepare(
-          'SELECT id, admin_id, admin_name, action, resource_type, resource_id, resource_name, created_at FROM audit_logs' + where + ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
+          'SELECT id, admin_id, admin_name, action, resource_type, resource_id, resource_name, before_data, after_data, created_at FROM audit_logs' + where + ' ORDER BY created_at DESC LIMIT ? OFFSET ?'
         ).bind(...binds, perPage, offset).all();
 
         return json({ data: results, total: countRow.total, page, per_page: perPage });
