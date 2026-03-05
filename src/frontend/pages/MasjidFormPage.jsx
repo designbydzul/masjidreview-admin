@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { X, Plus, Check, AlertTriangle, Camera, Trash2, MapPin, Loader2 } from 'lucide-react';
-import { getMasjid, getMasjids, createMasjid, updateMasjid, setMasjidStatus, getFacilities, handleFacilityCorrections, getFacilityNotes, searchPlaces, downloadPlacesPhoto, uploadFile } from '../api';
+import { getMasjid, getMasjids, createMasjid, updateMasjid, setMasjidStatus, getFacilities, handleFacilityCorrections, getFacilitySuggestions, handleFacilitySuggestion, getFacilityNotes, searchPlaces, downloadPlacesPhoto, uploadFile } from '../api';
 import { useToast } from '../contexts/ToastContext';
 import FormCard from '../components/FormCard';
 import { Input } from '../components/ui/input';
@@ -41,6 +41,7 @@ export default function MasjidFormPage() {
   const [facilityValues, setFacilityValues] = useState({});
   const [pendingCorrections, setPendingCorrections] = useState({});
   const [facilityNotes, setFacilityNotes] = useState([]);
+  const [pendingSuggestions, setPendingSuggestions] = useState({});
   const [correctionsLoading, setCorrectionsLoading] = useState(false);
   const [coordMsg, setCoordMsg] = useState('');
   const [placesLoading, setPlacesLoading] = useState(false);
@@ -72,6 +73,12 @@ export default function MasjidFormPage() {
             setInfoPhotos(photos.filter(Boolean));
           } catch { setInfoPhotos([]); }
           try { const notes = await getFacilityNotes(id); setFacilityNotes(notes); } catch {}
+          try {
+            const suggs = await getFacilitySuggestions({ masjid_id: id, status: 'pending' });
+            const sugMap = {};
+            for (const s of suggs) { if (s.facility_id) sugMap[s.facility_id] = s; }
+            setPendingSuggestions(sugMap);
+          } catch {}
 
           // Auto-fill from Google Places for pending submissions
           if (data.status === 'pending' && data.name && data.city) {
@@ -227,8 +234,42 @@ export default function MasjidFormPage() {
       const data = await getMasjid(id);
       if (data.facilities) setFacilityValues(data.facilities);
       setPendingCorrections(data.pending_corrections || {});
+      // Refresh suggestions too (they may overlap with corrections)
+      try {
+        const suggs = await getFacilitySuggestions({ masjid_id: id, status: 'pending' });
+        const sugMap = {};
+        for (const s of suggs) { if (s.facility_id) sugMap[s.facility_id] = s; }
+        setPendingSuggestions(sugMap);
+      } catch {}
     } catch (err) { showToast(err.message, 'error'); }
     finally { setCorrectionsLoading(false); }
+  };
+
+  // ── Individual suggestion action ──
+
+  const handleSuggestionAction = async (sugId, action, facId, suggestedValue) => {
+    try {
+      await handleFacilitySuggestion(sugId, action);
+      showToast(action === 'approve' ? 'Saran diterima' : 'Saran ditolak');
+      if (action === 'approve' && facId && suggestedValue !== undefined) {
+        setFacilityValues((prev) => ({ ...prev, [facId]: suggestedValue }));
+      }
+      setPendingSuggestions((prev) => {
+        const next = { ...prev };
+        delete next[facId];
+        return next;
+      });
+      // Also clear matching correction badge
+      if (pendingCorrections[facId]) {
+        setPendingCorrections((prev) => {
+          const next = { ...prev };
+          delete next[facId];
+          return next;
+        });
+      }
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
   };
 
   // ── Photo handlers ──
@@ -262,19 +303,46 @@ export default function MasjidFormPage() {
     facilityGroups[fac.grp].push(fac);
   }
 
-  const pendingCount = Object.keys(pendingCorrections).length;
+  const pendingCount = new Set([...Object.keys(pendingCorrections), ...Object.keys(pendingSuggestions)]).size;
 
   // ── Render inline correction badge ──
 
   const renderBadge = (facId) => {
+    const sugg = pendingSuggestions[facId];
     const corr = pendingCorrections[facId];
-    if (!corr) return null;
+    if (!sugg && !corr) return null;
+
+    const pendingValue = sugg ? sugg.suggested_value : corr.pending_value;
     const currentVal = facilityValues[facId] || '';
-    if (corr.pending_value === currentVal) return null;
-    const name = corr.submitted_by_name || (corr.submitted_by ? formatWA(corr.submitted_by) : 'Guest');
+    if (pendingValue === currentVal) return null;
+
+    const name = sugg
+      ? (sugg.submitted_by_name || (sugg.submitted_by_wa ? formatWA(sugg.submitted_by_wa) : 'Guest'))
+      : (corr.submitted_by_name || (corr.submitted_by ? formatWA(corr.submitted_by) : 'Guest'));
+
     return (
       <span className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 ml-auto shrink-0">
-        <span className="truncate max-w-[140px]">Saran: {corr.pending_value} — {name}</span>
+        <span className="truncate max-w-[140px]">Saran: {pendingValue} — {name}</span>
+        {sugg && (
+          <>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleSuggestionAction(sugg.id, 'approve', facId, sugg.suggested_value); }}
+              className="p-0.5 rounded hover:bg-green/20 text-green"
+              title="Terima saran"
+            >
+              <Check className="h-3 w-3" />
+            </button>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleSuggestionAction(sugg.id, 'reject', facId); }}
+              className="p-0.5 rounded hover:bg-red/20 text-red"
+              title="Tolak saran"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </>
+        )}
       </span>
     );
   };
