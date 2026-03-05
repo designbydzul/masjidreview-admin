@@ -1543,10 +1543,33 @@ export default {
         const masjidId = facCorrMatch[1];
         const body = await request.json();
 
-        if (!body.action || !['accept_all', 'reject_all'].includes(body.action)) {
-          return json({ error: 'action harus accept_all atau reject_all' }, 400);
+        if (!body.action || !['accept_all', 'reject_all', 'accept_one', 'reject_one'].includes(body.action)) {
+          return json({ error: 'action harus accept_all, reject_all, accept_one, atau reject_one' }, 400);
         }
 
+        // ── Individual correction ──
+        if (body.action === 'accept_one' || body.action === 'reject_one') {
+          if (!body.facility_id) return json({ error: 'facility_id wajib untuk accept_one/reject_one' }, 400);
+          const row = await env.DB.prepare(
+            'SELECT facility_id, pending_value, value FROM masjid_facilities WHERE masjid_id = ? AND facility_id = ? AND pending_value IS NOT NULL'
+          ).bind(masjidId, body.facility_id).first();
+          if (!row) return json({ error: 'Koreksi tidak ditemukan' }, 404);
+
+          if (body.action === 'accept_one') {
+            await env.DB.prepare(
+              'UPDATE masjid_facilities SET value = pending_value, pending_value = NULL, pending_submitted_by = NULL, pending_created_at = NULL WHERE masjid_id = ? AND facility_id = ?'
+            ).bind(masjidId, body.facility_id).run();
+          } else {
+            await env.DB.prepare(
+              'UPDATE masjid_facilities SET pending_value = NULL, pending_submitted_by = NULL, pending_created_at = NULL WHERE masjid_id = ? AND facility_id = ?'
+            ).bind(masjidId, body.facility_id).run();
+          }
+
+          await logAudit(env, { adminId: admin.id, adminName: admin.name, action: body.action === 'accept_one' ? 'facility_correction_accept' : 'facility_correction_reject', resourceType: 'masjid', resourceId: masjidId, resourceName: null, beforeData: { facility_id: body.facility_id, old_value: row.value, pending_value: row.pending_value }, afterData: { action: body.action } });
+          return json({ ok: true, updated: 1, accepted_value: body.action === 'accept_one' ? row.pending_value : null });
+        }
+
+        // ── Bulk corrections ──
         const { results: pending } = await env.DB.prepare(
           'SELECT facility_id, pending_value, value FROM masjid_facilities WHERE masjid_id = ? AND pending_value IS NOT NULL'
         ).bind(masjidId).all();

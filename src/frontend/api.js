@@ -100,8 +100,8 @@ export const deleteFacility = (id) => apiFetch('/api/facilities/' + id, { method
 export const toggleFacility = (id) => apiFetch('/api/facilities/' + id + '/toggle', { method: 'PATCH' });
 
 // Facility Corrections & Notes
-export const handleFacilityCorrections = (masjidId, action) =>
-  apiFetch('/api/masjids/' + masjidId + '/facility-corrections', { method: 'PATCH', body: JSON.stringify({ action }) });
+export const handleFacilityCorrections = (masjidId, action, facilityId) =>
+  apiFetch('/api/masjids/' + masjidId + '/facility-corrections', { method: 'PATCH', body: JSON.stringify({ action, ...(facilityId ? { facility_id: facilityId } : {}) }) });
 export const getFacilityNotes = (masjidId) =>
   apiFetch('/api/masjids/' + masjidId + '/facility-notes');
 export const getFacilitySuggestions = (params = {}) => {
