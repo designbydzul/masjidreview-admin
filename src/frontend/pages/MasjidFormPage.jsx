@@ -248,8 +248,11 @@ export default function MasjidFormPage() {
   // ── Individual suggestion action ──
 
   const handleSuggestionAction = async (sugId, action, facId, suggestedValue) => {
+    console.log('[BADGE-DEBUG] handleSuggestionAction called:', { sugId, action, facId, suggestedValue });
     try {
+      console.log('[BADGE-DEBUG] calling handleFacilitySuggestion API...');
       await handleFacilitySuggestion(sugId, action);
+      console.log('[BADGE-DEBUG] API call succeeded');
       showToast(action === 'approve' ? 'Saran diterima' : 'Saran ditolak');
       if (action === 'approve' && facId && suggestedValue !== undefined) {
         setFacilityValues((prev) => ({ ...prev, [facId]: suggestedValue }));
@@ -259,7 +262,6 @@ export default function MasjidFormPage() {
         delete next[facId];
         return next;
       });
-      // Also clear matching correction badge
       if (pendingCorrections[facId]) {
         setPendingCorrections((prev) => {
           const next = { ...prev };
@@ -268,6 +270,7 @@ export default function MasjidFormPage() {
         });
       }
     } catch (err) {
+      console.error('[BADGE-DEBUG] handleSuggestionAction error:', err);
       showToast(err.message, 'error');
     }
   };
@@ -275,9 +278,12 @@ export default function MasjidFormPage() {
   // ── Individual correction action ──
 
   const handleCorrectionAction = async (facId, action, pendingValue) => {
+    console.log('[BADGE-DEBUG] handleCorrectionAction called:', { facId, action, pendingValue, masjidId: id });
     try {
       const apiAction = action === 'approve' ? 'accept_one' : 'reject_one';
+      console.log('[BADGE-DEBUG] calling handleFacilityCorrections API...', { apiAction, masjidId: id, facId });
       await handleFacilityCorrections(id, apiAction, facId);
+      console.log('[BADGE-DEBUG] API call succeeded');
       showToast(action === 'approve' ? 'Koreksi diterima' : 'Koreksi ditolak');
       if (action === 'approve' && pendingValue !== undefined) {
         setFacilityValues((prev) => ({ ...prev, [facId]: pendingValue }));
@@ -287,7 +293,6 @@ export default function MasjidFormPage() {
         delete next[facId];
         return next;
       });
-      // Also clear matching suggestion badge
       if (pendingSuggestions[facId]) {
         setPendingSuggestions((prev) => {
           const next = { ...prev };
@@ -296,6 +301,7 @@ export default function MasjidFormPage() {
         });
       }
     } catch (err) {
+      console.error('[BADGE-DEBUG] handleCorrectionAction error:', err);
       showToast(err.message, 'error');
     }
   };
@@ -341,16 +347,13 @@ export default function MasjidFormPage() {
     if (!sugg && !corr) return null;
 
     const pendingValue = sugg ? sugg.suggested_value : corr.pending_value;
-    const currentVal = facilityValues[facId] || '';
-    if (pendingValue === currentVal) return null;
 
     const name = sugg
       ? (sugg.submitted_by_name || (sugg.submitted_by_wa ? formatWA(sugg.submitted_by_wa) : 'Guest'))
       : (corr.submitted_by_name || (corr.submitted_by ? formatWA(corr.submitted_by) : 'Guest'));
 
-    const onApprove = (e) => {
-      e.stopPropagation();
-      e.preventDefault();
+    const doApprove = () => {
+      console.log('[BADGE-DEBUG] doApprove fired for facId:', facId, { hasSugg: !!sugg, hasCorr: !!corr });
       if (sugg) {
         handleSuggestionAction(sugg.id, 'approve', facId, sugg.suggested_value);
       } else {
@@ -358,9 +361,8 @@ export default function MasjidFormPage() {
       }
     };
 
-    const onReject = (e) => {
-      e.stopPropagation();
-      e.preventDefault();
+    const doReject = () => {
+      console.log('[BADGE-DEBUG] doReject fired for facId:', facId, { hasSugg: !!sugg, hasCorr: !!corr });
       if (sugg) {
         handleSuggestionAction(sugg.id, 'reject', facId);
       } else {
@@ -369,26 +371,33 @@ export default function MasjidFormPage() {
     };
 
     return (
-      <span className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 ml-auto shrink-0">
+      <span
+        className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 shrink-0"
+        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
         <span className="truncate max-w-[140px]">Saran: {pendingValue} — {name}</span>
-        <button
-          type="button"
-          onClick={onApprove}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="p-0.5 rounded hover:bg-green/20 text-green"
+        <span
+          role="button"
+          tabIndex={0}
+          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); console.log('[BADGE-DEBUG] ✓ mousedown'); doApprove(); }}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
+          className="inline-flex items-center justify-center w-5 h-5 rounded cursor-pointer hover:bg-green-100 text-green-700"
           title="Terima saran"
         >
           <Check className="h-3 w-3" />
-        </button>
-        <button
-          type="button"
-          onClick={onReject}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="p-0.5 rounded hover:bg-red/20 text-red"
+        </span>
+        <span
+          role="button"
+          tabIndex={0}
+          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); console.log('[BADGE-DEBUG] ✗ mousedown'); doReject(); }}
+          onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
+          className="inline-flex items-center justify-center w-5 h-5 rounded cursor-pointer hover:bg-red-100 text-red-700"
           title="Tolak saran"
         >
           <X className="h-3 w-3" />
-        </button>
+        </span>
       </span>
     );
   };
@@ -401,10 +410,12 @@ export default function MasjidFormPage() {
 
     if (fac.input_type === 'toggle') {
       return (
-        <div key={fac.id} className="flex items-center gap-2 min-h-[32px]">
-          <Switch checked={value === 'ya'} onCheckedChange={() => setFacValue(fac.id, value === 'ya' ? '' : 'ya')} />
-          <span className="text-sm text-text">{fac.name}</span>
-          {badge}
+        <div key={fac.id}>
+          <div className="flex items-center gap-2 min-h-[32px]">
+            <Switch checked={value === 'ya'} onCheckedChange={() => setFacValue(fac.id, value === 'ya' ? '' : 'ya')} />
+            <span className="text-sm text-text">{fac.name}</span>
+          </div>
+          {badge && <div className="ml-[52px] -mt-0.5 mb-1">{badge}</div>}
         </div>
       );
     }
@@ -413,23 +424,27 @@ export default function MasjidFormPage() {
       let options = [];
       try { options = JSON.parse(fac.options || '[]'); } catch {}
       return (
-        <div key={fac.id} className="flex items-center gap-2 min-h-[32px]">
-          <Label className="text-sm text-text whitespace-nowrap shrink-0">{fac.name}</Label>
-          <Select value={value} onChange={(e) => setFacValue(fac.id, e.target.value)} className="h-8 text-xs w-[140px]">
-            <option value="">-- Pilih --</option>
-            {options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-          </Select>
-          {badge}
+        <div key={fac.id}>
+          <div className="flex items-center gap-2 min-h-[32px]">
+            <Label className="text-sm text-text whitespace-nowrap shrink-0">{fac.name}</Label>
+            <Select value={value} onChange={(e) => setFacValue(fac.id, e.target.value)} className="h-8 text-xs w-[140px]">
+              <option value="">-- Pilih --</option>
+              {options.map((opt) => <option key={opt} value={opt}>{opt}</option>)}
+            </Select>
+          </div>
+          {badge && <div className="ml-2 -mt-0.5 mb-1">{badge}</div>}
         </div>
       );
     }
 
     if (fac.input_type === 'number') {
       return (
-        <div key={fac.id} className="flex items-center gap-2 min-h-[32px]">
-          <Label className="text-sm text-text whitespace-nowrap shrink-0">{fac.name}</Label>
-          <Input type="number" value={value} onChange={(e) => setFacValue(fac.id, e.target.value)} className="h-8 text-xs w-[100px]" />
-          {badge}
+        <div key={fac.id}>
+          <div className="flex items-center gap-2 min-h-[32px]">
+            <Label className="text-sm text-text whitespace-nowrap shrink-0">{fac.name}</Label>
+            <Input type="number" value={value} onChange={(e) => setFacValue(fac.id, e.target.value)} className="h-8 text-xs w-[100px]" />
+          </div>
+          {badge && <div className="ml-2 -mt-0.5 mb-1">{badge}</div>}
         </div>
       );
     }
