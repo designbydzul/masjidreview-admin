@@ -340,6 +340,8 @@ export default function MasjidFormPage() {
   const pendingCount = new Set([...Object.keys(pendingCorrections), ...Object.keys(pendingSuggestions)]).size;
 
   // ── Render inline correction badge ──
+  // NOTE: Uses native DOM onclick via ref to bypass React synthetic events entirely.
+  // React event handlers (onClick, onMouseDown) were NOT firing on badge buttons.
 
   const renderBadge = (facId) => {
     const sugg = pendingSuggestions[facId];
@@ -352,51 +354,55 @@ export default function MasjidFormPage() {
       ? (sugg.submitted_by_name || (sugg.submitted_by_wa ? formatWA(sugg.submitted_by_wa) : 'Guest'))
       : (corr.submitted_by_name || (corr.submitted_by ? formatWA(corr.submitted_by) : 'Guest'));
 
-    const doApprove = () => {
-      console.log('[BADGE-DEBUG] doApprove fired for facId:', facId, { hasSugg: !!sugg, hasCorr: !!corr });
-      if (sugg) {
-        handleSuggestionAction(sugg.id, 'approve', facId, sugg.suggested_value);
-      } else {
-        handleCorrectionAction(facId, 'approve', corr.pending_value);
-      }
+    // Attach native DOM click handler — completely bypasses React event delegation
+    const attachApprove = (el) => {
+      if (!el) return;
+      el.onclick = (nativeEvent) => {
+        nativeEvent.stopPropagation();
+        nativeEvent.stopImmediatePropagation();
+        nativeEvent.preventDefault();
+        console.log('[BADGE] ✓ approve native click fired for', facId);
+        if (sugg) {
+          handleSuggestionAction(sugg.id, 'approve', facId, sugg.suggested_value);
+        } else {
+          handleCorrectionAction(facId, 'approve', corr.pending_value);
+        }
+        return false;
+      };
     };
 
-    const doReject = () => {
-      console.log('[BADGE-DEBUG] doReject fired for facId:', facId, { hasSugg: !!sugg, hasCorr: !!corr });
-      if (sugg) {
-        handleSuggestionAction(sugg.id, 'reject', facId);
-      } else {
-        handleCorrectionAction(facId, 'reject');
-      }
+    const attachReject = (el) => {
+      if (!el) return;
+      el.onclick = (nativeEvent) => {
+        nativeEvent.stopPropagation();
+        nativeEvent.stopImmediatePropagation();
+        nativeEvent.preventDefault();
+        console.log('[BADGE] ✗ reject native click fired for', facId);
+        if (sugg) {
+          handleSuggestionAction(sugg.id, 'reject', facId);
+        } else {
+          handleCorrectionAction(facId, 'reject');
+        }
+        return false;
+      };
     };
 
     return (
-      <span
-        className="inline-flex items-center gap-1 text-[11px] bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 shrink-0"
-        onClick={(e) => e.stopPropagation()}
-        onMouseDown={(e) => e.stopPropagation()}
-        onPointerDown={(e) => e.stopPropagation()}
-      >
+      <span className="inline-flex items-center gap-1.5 text-[11px] bg-amber-50 text-amber-700 border border-amber-200 rounded px-1.5 py-0.5 shrink-0">
         <span className="truncate max-w-[140px]">Saran: {pendingValue} — {name}</span>
         <span
-          role="button"
-          tabIndex={0}
-          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); console.log('[BADGE-DEBUG] ✓ mousedown'); doApprove(); }}
-          onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
-          className="inline-flex items-center justify-center w-5 h-5 rounded cursor-pointer hover:bg-green-100 text-green-700"
+          ref={attachApprove}
+          className="inline-flex items-center justify-center w-6 h-6 rounded cursor-pointer bg-green-100 hover:bg-green-200 text-green-700"
           title="Terima saran"
         >
-          <Check className="h-3 w-3" />
+          <Check className="h-3.5 w-3.5 pointer-events-none" />
         </span>
         <span
-          role="button"
-          tabIndex={0}
-          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); console.log('[BADGE-DEBUG] ✗ mousedown'); doReject(); }}
-          onClick={(e) => { e.stopPropagation(); e.preventDefault(); }}
-          className="inline-flex items-center justify-center w-5 h-5 rounded cursor-pointer hover:bg-red-100 text-red-700"
+          ref={attachReject}
+          className="inline-flex items-center justify-center w-6 h-6 rounded cursor-pointer bg-red-100 hover:bg-red-200 text-red-700"
           title="Tolak saran"
         >
-          <X className="h-3 w-3" />
+          <X className="h-3.5 w-3.5 pointer-events-none" />
         </span>
       </span>
     );
@@ -524,6 +530,9 @@ export default function MasjidFormPage() {
               <div className="mt-3">
                 <Label>Alamat</Label>
                 <Input value={form.address || ''} onChange={(e) => set('address', e.target.value)} className={cn(highlightedFields.address && 'ring-2 ring-green/40 bg-green-light transition-all duration-500')} />
+                {form.original_address && (
+                  <p className="text-xs text-text-3 mt-1">Alamat dari jamaah: {form.original_address}</p>
+                )}
               </div>
 
               {/* Auto-fill warning */}
