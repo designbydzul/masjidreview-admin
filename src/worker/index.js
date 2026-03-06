@@ -1125,11 +1125,13 @@ export default {
         const masjidId = url.searchParams.get('masjid_id');
         const status = url.searchParams.get('status');
 
-        let sql = `SELECT fs.*, f.name as facility_name, m.name as masjid_name, u.name as submitted_by_name
+        let sql = `SELECT fs.*, f.name as facility_name, m.name as masjid_name,
+          COALESCE(u_id.name, u_wa.name) as submitted_by_name
           FROM facility_suggestions fs
           LEFT JOIN facilities f ON fs.facility_id = f.id
           JOIN masjid m ON fs.masjid_id = m.id
-          LEFT JOIN users u ON fs.submitted_by_wa = u.wa_number
+          LEFT JOIN users u_id ON fs.user_id = u_id.id
+          LEFT JOIN users u_wa ON fs.user_id IS NULL AND fs.submitted_by_wa IS NOT NULL AND fs.submitted_by_wa = u_wa.wa_number
           WHERE m.is_deleted = 0`;
         const params = [];
 
@@ -1531,6 +1533,27 @@ export default {
         const updated = await env.DB.prepare('SELECT * FROM masjid WHERE id = ?').bind(masjidId).first();
         if (!updated) return json({ error: 'Masjid not found' }, 404);
         await logAudit(env, { adminId: admin.id, adminName: admin.name, action: body.status === 'approved' ? 'masjid_approve' : 'masjid_reject', resourceType: 'masjid', resourceId: masjidId, resourceName: beforeMasjid?.name, beforeData: { status: beforeMasjid?.status }, afterData: { status: body.status } });
+
+        // When approved, copy masjid_facilities into facility_suggestions for the submitter
+        if (body.status === 'approved') {
+          try {
+            const masjidRow = await env.DB.prepare('SELECT submitted_by FROM masjid WHERE id = ?').bind(masjidId).first();
+            const submittedBy = masjidRow?.submitted_by;
+            if (submittedBy) {
+              const { results: facilities } = await env.DB.prepare('SELECT facility_id, value FROM masjid_facilities WHERE masjid_id = ?').bind(masjidId).all();
+              if (facilities && facilities.length > 0) {
+                const placeholders = facilities.map(() => "(lower(hex(randomblob(16))), ?, ?, ?, NULL, ?, 'approved', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))").join(', ');
+                const binds = facilities.flatMap(f => [masjidId, f.facility_id, f.value, submittedBy]);
+                await env.DB.prepare(
+                  `INSERT INTO facility_suggestions (id, masjid_id, facility_id, suggested_value, submitted_by_wa, user_id, status, created_at) VALUES ${placeholders}`
+                ).bind(...binds).run();
+              }
+            }
+          } catch (err) {
+            console.error('Failed to copy masjid_facilities to facility_suggestions:', err);
+          }
+        }
+
         return json(updated);
       }
 
