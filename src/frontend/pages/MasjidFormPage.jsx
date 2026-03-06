@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { X, Plus, Check, AlertTriangle, Camera, Trash2, MapPin, Loader2 } from 'lucide-react';
-import { getMasjid, getMasjids, createMasjid, updateMasjid, setMasjidStatus, getFacilities, handleFacilityCorrections, getFacilitySuggestions, handleFacilitySuggestion, getFacilityNotes, searchPlaces, downloadPlacesPhoto, uploadFile } from '../api';
+import { getMasjid, getMasjids, createMasjid, updateMasjid, setMasjidStatus, getFacilities, handleFacilityCorrections, getFacilitySuggestions, handleFacilitySuggestion, bulkUpdateSuggestions, getFacilityNotes, searchPlaces, downloadPlacesPhoto, uploadFile } from '../api';
 import { useToast } from '../contexts/ToastContext';
 import FormCard from '../components/FormCard';
 import { Input } from '../components/ui/input';
@@ -229,12 +229,31 @@ export default function MasjidFormPage() {
   const handleCorrectionsAction = async (action) => {
     setCorrectionsLoading(true);
     try {
-      await handleFacilityCorrections(id, action);
-      showToast(action === 'accept_all' ? 'Koreksi diterima' : 'Koreksi ditolak');
+      const status = action === 'accept_all' ? 'approved' : 'rejected';
+
+      // 1. Bulk handle corrections (if any)
+      const hasCorrections = Object.keys(pendingCorrections).length > 0;
+      if (hasCorrections) {
+        await handleFacilityCorrections(id, action);
+      }
+
+      // 2. Bulk handle suggestions (if any)
+      const suggestionIds = Object.values(pendingSuggestions).map(s => s.id).filter(Boolean);
+      if (suggestionIds.length > 0) {
+        await bulkUpdateSuggestions(suggestionIds, status);
+      }
+
+      showToast(action === 'accept_all' ? 'Semua diterima' : 'Semua ditolak');
+
+      // Clear both states immediately so pills disappear
+      setPendingCorrections({});
+      setPendingSuggestions({});
+
+      // Then refresh from server
       const data = await getMasjid(id);
       if (data.facilities) setFacilityValues(data.facilities);
-      setPendingCorrections(data.pending_corrections || {});
-      // Refresh suggestions too (they may overlap with corrections)
+      if (data.pending_corrections) setPendingCorrections(data.pending_corrections);
+
       try {
         const suggs = await getFacilitySuggestions({ masjid_id: id, status: 'pending' });
         const sugMap = {};
